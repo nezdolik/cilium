@@ -1,0 +1,204 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  annotations:
+    meta.helm.sh/release-name: cilium
+    meta.helm.sh/release-namespace: kube-system
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: cilium-envoy-new
+    app.kubernetes.io/part-of: cilium
+    k8s-app: cilium-envoy-new
+    name: cilium-envoy-new
+  name: cilium-envoy-new
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      k8s-app: cilium-envoy-new
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cilium-envoy-new
+        app.kubernetes.io/part-of: cilium
+        k8s-app: cilium-envoy-new
+        name: cilium-envoy-new
+    spec:
+      # affinity:
+      #   nodeAffinity:
+      #     requiredDuringSchedulingIgnoredDuringExecution:
+      #       nodeSelectorTerms:
+      #       - matchExpressions:
+      #         - key: cilium.io/no-schedule
+      #           operator: NotIn
+      #           values:
+      #           - "true"
+      #   podAffinity:
+      #     requiredDuringSchedulingIgnoredDuringExecution:
+      #     - labelSelector:
+      #         matchLabels:
+      #           k8s-app: cilium
+      #       topologyKey: kubernetes.io/hostname
+      #   podAntiAffinity:
+      #     requiredDuringSchedulingIgnoredDuringExecution:
+      #     - labelSelector:
+      #         matchLabels:
+      #           k8s-app: cilium-envoy
+      #       topologyKey: kubernetes.io/hostname
+      automountServiceAccountToken: true
+      # initContainers:
+      # - name: change-ownership-container
+      #   image: busybox:latest
+      #   command: ["/bin/chmod","-R","757", "/dev/shm"]
+      #   securityContext:
+      #     runAsUser: 0
+      #     privileged: true
+      containers:
+      - args:
+        - --
+        - -c /var/run/cilium/envoy/bootstrap-config.json
+        - --log-level info
+        #- --drain-time-s 15
+        - --restart-epoch 1000
+        #- --parent-shutdown-time-s 20
+        - --base-id 1
+        # - --socket-path /var/run/cilium-envoy/hot-restart-sockets
+        # - --socket-mode 757
+        - --skip-hot-restart-on-no-parent
+        command:
+        - /usr/bin/cilium-envoy-starter
+        env:
+        - name: K8S_NODE_NAME
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: spec.nodeName
+        - name: CILIUM_K8S_NAMESPACE
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+        image: quay.io/cilium/cilium-envoy:v1.34.4-1754895458-68cffdfa568b6b226d70a7ef81fc65dda3b890bf@sha256:247e908700012f7ef56f75908f8c965215c26a27762f296068645eb55450bda2
+        #image: quay.io/cilium/cilium-envoy:v1.34.4-68cffdfa568b6b226d70a7ef81fc65dda3b890bf@sha256:2f156f2f93c95ef0c68ce50f364c85bd61557ee73c60e6ff3b0bc2785f06c4af
+        #image: nezdolik/cilium-envoy:latest
+        #image: nezdolik/cilium-envoy:v1.34.4-b406424abb716d91aae63afbab6e22241975520e-amd64
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          failureThreshold: 10
+          httpGet:
+            host: 127.0.0.1
+            path: /healthz
+            port: 9878
+            scheme: HTTP
+          periodSeconds: 30
+          successThreshold: 1
+          timeoutSeconds: 5
+        name: cilium-envoy-new
+        ports:
+        - containerPort: 19964
+          hostPort: 19964
+          name: envoy-metrics
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            host: 127.0.0.1
+            path: /healthz
+            port: 9878
+            scheme: HTTP
+          periodSeconds: 30
+          successThreshold: 1
+          timeoutSeconds: 5
+        resources: {}
+        securityContext:
+          capabilities:
+            add:
+            - NET_ADMIN
+            - SYS_ADMIN
+            drop:
+            - ALL
+          seLinuxOptions:
+            level: s0
+            type: spc_t
+        startupProbe:
+          failureThreshold: 105
+          httpGet:
+            host: 127.0.0.1
+            path: /healthz
+            port: 9878
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 2
+          successThreshold: 1
+          timeoutSeconds: 1
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - mountPath: /var/run/cilium/envoy/sockets
+          name: envoy-sockets
+        - mountPath: /var/run/cilium/envoy/artifacts
+          name: envoy-artifacts
+          readOnly: true
+        - mountPath: /var/run/cilium/envoy/
+          name: envoy-config
+          readOnly: true
+        - mountPath: /sys/fs/bpf
+          mountPropagation: HostToContainer
+          name: bpf-maps
+        - mountPath: /dev/shm
+          name: envoy-shared-memory
+        # - mountPath: /var/run/cilium-envoy/hot-restart-sockets
+        #   name: envoy-hot-restart-sockets
+      dnsPolicy: ClusterFirst
+      hostNetwork: true
+      nodeSelector:
+        kubernetes.io/os: linux
+      priorityClassName: system-node-critical
+      #restartPolicy: Always
+      schedulerName: default-scheduler
+      # securityContext:
+      #   appArmorProfile:
+      #     type: Unconfined
+      serviceAccount: cilium-envoy
+      serviceAccountName: cilium-envoy
+      terminationGracePeriodSeconds: 1
+      tolerations:
+      - operator: Exists
+      volumes:
+      - hostPath:
+          path: /var/run/cilium/envoy/sockets
+          type: DirectoryOrCreate
+        name: envoy-sockets
+      - hostPath:
+          path: /var/run/cilium/envoy/artifacts
+          type: DirectoryOrCreate
+        name: envoy-artifacts
+      - configMap:
+          defaultMode: 256
+          items:
+          - key: bootstrap-config.json
+            path: bootstrap-config.json
+          name: cilium-envoy-config-new
+        name: envoy-config
+      - hostPath:
+          path: /sys/fs/bpf
+          type: DirectoryOrCreate
+        name: bpf-maps
+      - hostPath:
+          path: /dev/envoy/shm
+          type: DirectoryOrCreate
+        name: envoy-shared-memory
+      # - hostPath:
+      #     path: /var/run/cilium-envoy/hot-restart-sockets
+      #     type: DirectoryOrCreate
+      #   name: envoy-hot-restart-sockets
+  updateStrategy:
+    type: RollingUpdate
+# status:
+#   currentNumberScheduled: 2
+#   desiredNumberScheduled: 2
+#   numberAvailable: 2
+#   numberMisscheduled: 0
+#   numberReady: 2
+#   observedGeneration: 1
+#   updatedNumberScheduled: 2
