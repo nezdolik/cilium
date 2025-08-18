@@ -1,6 +1,6 @@
 # Copyright Authors of Cilium
 # SPDX-License-Identifier: Apache-2.0
-
+#
 ##@ Development (Kind)
 
 WAIT_DURATION ?= 30s
