@@ -16,7 +16,7 @@ import (
 	"github.com/cilium/cilium/pkg/completion"
 	"github.com/cilium/cilium/pkg/container/set"
 	"github.com/cilium/cilium/pkg/endpointmanager"
-	"github.com/cilium/cilium/pkg/envoy"
+	"github.com/cilium/cilium/pkg/envoy/xds"
 	"github.com/cilium/cilium/pkg/identity"
 	"github.com/cilium/cilium/pkg/identity/cache"
 	ciliumio "github.com/cilium/cilium/pkg/k8s/apis/cilium.io"
@@ -55,7 +55,7 @@ type ingressPolicyManager struct {
 	policyRepository policy.PolicyRepository
 
 	// xdsServer is used to send the distilled policy to the xDS server
-	xdsServer envoy.XDSServer
+	xdsServer xds.XDSServer
 
 	// ingressIdentities is the cache to store the identity for the Ingress Policy
 	ingressIdentities map[resource.Key]*identity.Identity
@@ -74,7 +74,7 @@ type ingressPolicyParam struct {
 	CacheIdentityAllocator cache.IdentityAllocator
 	EndpointPolicyManager  endpointmanager.PolicyUpdateCallbackManager
 	PolicyRepository       policy.PolicyRepository
-	XdsServer              envoy.XDSServer
+	XdsServer              xds.XDSServer
 }
 
 type Updater interface {

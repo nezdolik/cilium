@@ -18,7 +18,7 @@ import (
 	datapath "github.com/cilium/cilium/pkg/datapath/fake/types"
 	"github.com/cilium/cilium/pkg/datapath/iptables"
 	"github.com/cilium/cilium/pkg/datapath/linux/route/reconciler"
-	"github.com/cilium/cilium/pkg/envoy"
+	util "github.com/cilium/cilium/pkg/envoy/util"
 	"github.com/cilium/cilium/pkg/envoy/xds"
 	"github.com/cilium/cilium/pkg/hive"
 	"github.com/cilium/cilium/pkg/policy"
@@ -80,7 +80,7 @@ func (p *fakeProxyPolicy) GetListener() string {
 
 func TestCreateOrUpdateRedirectMissingListener(t *testing.T) {
 	testRunDir := t.TempDir()
-	socketDir := envoy.GetSocketDir(testRunDir)
+	socketDir := util.GetSocketDir(testRunDir)
 	err := os.MkdirAll(socketDir, 0o700)
 	require.NoError(t, err)
 
@@ -99,7 +99,7 @@ func TestCreateOrUpdateRedirectMissingListener(t *testing.T) {
 
 func TestCreateOrUpdateRedirectMissingListenerWithUseOriginalSourceAddrFlagEnabled(t *testing.T) {
 	testRunDir := t.TempDir()
-	socketDir := envoy.GetSocketDir(testRunDir)
+	socketDir := util.GetSocketDir(testRunDir)
 	err := os.MkdirAll(socketDir, 0o700)
 	require.NoError(t, err)
 	ipTablesManager := &iptables.Manager{}
@@ -126,7 +126,7 @@ func TestCreateOrUpdateRedirectMissingListenerWithUseOriginalSourceAddrFlagEnabl
 
 func TestCreateOrUpdateRedirectMissingListenerWithUseOriginalSourceAddrFlagDisabled(t *testing.T) {
 	testRunDir := t.TempDir()
-	socketDir := envoy.GetSocketDir(testRunDir)
+	socketDir := util.GetSocketDir(testRunDir)
 	err := os.MkdirAll(socketDir, 0o700)
 	require.NoError(t, err)
 	ipTablesManager := &iptables.Manager{}
@@ -156,15 +156,15 @@ type fakeXdsServer struct {
 	ObservedMayUseOriginalSourceAddr bool
 }
 
-func (r *fakeXdsServer) UpdateEnvoyResources(ctx context.Context, old envoy.Resources, new envoy.Resources) error {
+func (r *fakeXdsServer) UpdateEnvoyResources(ctx context.Context, old xds.Resources, new xds.Resources) error {
 	panic("unimplemented")
 }
 
-func (r *fakeXdsServer) DeleteEnvoyResources(ctx context.Context, resources envoy.Resources) error {
+func (r *fakeXdsServer) DeleteEnvoyResources(ctx context.Context, resources xds.Resources) error {
 	panic("unimplemented")
 }
 
-func (r *fakeXdsServer) UpsertEnvoyResources(ctx context.Context, resources envoy.Resources) error {
+func (r *fakeXdsServer) UpsertEnvoyResources(ctx context.Context, resources xds.Resources) error {
 	panic("unimplemented")
 }
 
@@ -213,4 +213,4 @@ func (*fakeXdsServer) SetPolicySecretSyncNamespace(string) {
 	panic("unimplemented")
 }
 
-var _ envoy.XDSServer = &fakeXdsServer{}
+var _ xds.XDSServer = &fakeXdsServer{}

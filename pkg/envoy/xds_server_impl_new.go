@@ -1,56 +1,45 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright Authors of Cilium
-
+// TODO(nezdolik) finish subtractResources, deleteEnvoyResources, updateEnvoyResources methods
 package envoy
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
-	"maps"
 	"net"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
-	"strings"
 
 	cilium "github.com/cilium/proxy/go/cilium/api"
-	"github.com/cilium/proxy/pkg/policy/api/kafka"
 	envoy_mysql_proxy "github.com/envoyproxy/go-control-plane/contrib/envoy/extensions/filters/network/mysql_proxy/v3"
-	envoy_config_cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	envoy_config_core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
-	envoy_config_endpoint "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	envoy_config_listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	envoy_config_route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	envoy_extensions_filters_http_router_v3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/router/v3"
-	envoy_upstream_codec "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/upstream_codec/v3"
 	envoy_extensions_listener_tls_inspector_v3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/listener/tls_inspector/v3"
 	envoy_config_http "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	envoy_mongo_proxy "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/mongo_proxy/v3"
 	envoy_config_tcp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
-	envoy_config_tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
-	envoy_type_matcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
-	"k8s.io/apimachinery/pkg/types"
 
-	"github.com/cilium/cilium/pkg/bpf"
 	"github.com/cilium/cilium/pkg/completion"
 	"github.com/cilium/cilium/pkg/container/versioned"
 	"github.com/cilium/cilium/pkg/crypto/certificatemanager"
 	"github.com/cilium/cilium/pkg/endpointstate"
 	envoypolicy "github.com/cilium/cilium/pkg/envoy/policy"
 	_ "github.com/cilium/cilium/pkg/envoy/resource"
+	util "github.com/cilium/cilium/pkg/envoy/util"
 	"github.com/cilium/cilium/pkg/envoy/xds"
+	"github.com/cilium/cilium/pkg/envoy/xdsnew"
 	"github.com/cilium/cilium/pkg/lock"
 	"github.com/cilium/cilium/pkg/logging/logfields"
-	"github.com/cilium/cilium/pkg/maps/ipcache"
 	"github.com/cilium/cilium/pkg/option"
 	"github.com/cilium/cilium/pkg/policy"
-	"github.com/cilium/cilium/pkg/policy/api"
 	"github.com/cilium/cilium/pkg/promise"
 	"github.com/cilium/cilium/pkg/proxy/endpoint"
 	"github.com/cilium/cilium/pkg/time"
@@ -60,75 +49,32 @@ import (
 var (
 	// allowAllPortNetworkPolicy is a PortNetworkPolicy that allows all traffic
 	// to any L4 port.
-	allowAllTCPPortNetworkPolicy = &cilium.PortNetworkPolicy{
+	allowAllTCPPortNetworkPolicyNew = &cilium.PortNetworkPolicy{
 		// Allow all TCP traffic to any port.
 		Protocol: envoy_config_core.SocketAddress_TCP,
 	}
-	allowAllPortNetworkPolicy = []*cilium.PortNetworkPolicy{
+	allowAllPortNetworkPolicyNew = []*cilium.PortNetworkPolicy{
 		// Allow all TCP traffic to any port.
-		allowAllTCPPortNetworkPolicy,
+		allowAllTCPPortNetworkPolicyNew,
 		// Allow all UDP/SCTP traffic to any port.
 		// UDP/SCTP rules not sent to Envoy for now.
 	}
 )
 
 const (
-	CiliumXDSClusterName = "xds-grpc-cilium"
-
-	adminClusterName      = "/envoy-admin"
-	egressClusterName     = "egress-cluster"
-	egressTLSClusterName  = "egress-cluster-tls"
-	ingressClusterName    = "ingress-cluster"
-	ingressTLSClusterName = "ingress-cluster-tls"
-	metricsListenerName   = "envoy-prometheus-metrics-listener"
-	adminListenerName     = "envoy-admin-listener"
+	adminClusterNameNew      = "/envoy-admin"
+	egressClusterNameNew     = "egress-cluster"
+	egressTLSClusterNameNew  = "egress-cluster-tls"
+	ingressClusterNameNew    = "ingress-cluster"
+	ingressTLSClusterNameNew = "ingress-cluster-tls"
+	metricsListenerNameNew   = "envoy-prometheus-metrics-listener"
+	adminListenerNameNew     = "envoy-admin-listener"
 )
 
-// XDSServer provides a high-lever interface to manage resources published using the xDS gRPC API.
-type XDSServer interface {
-	// AddListener adds a listener to a running Envoy proxy.
-	AddListener(name string, kind policy.L7ParserType, port uint16, isIngress bool, mayUseOriginalSourceAddr bool, wg *completion.WaitGroup, cb func(err error)) error
-	// AddAdminListener adds an Admin API listener to Envoy.
-	AddAdminListener(port uint16, wg *completion.WaitGroup)
-	// AddMetricsListener adds a prometheus metrics listener to Envoy.
-	AddMetricsListener(port uint16, wg *completion.WaitGroup)
-	// RemoveListener removes an existing Envoy Listener.
-	RemoveListener(name string, wg *completion.WaitGroup) xds.AckingResourceMutatorRevertFunc
-
-	// UpsertEnvoyResources inserts or updates Envoy resources in 'resources' to the xDS cache,
-	// from where they will be delivered to Envoy via xDS streaming gRPC.
-	UpsertEnvoyResources(ctx context.Context, resources Resources) error
-	// UpdateEnvoyResources removes any resources in 'old' that are not
-	// present in 'new' and then adds or updates all resources in 'new'.
-	// Envoy does not support changing the listening port of an existing
-	// listener, so if the port changes we have to delete the old listener
-	// and then add the new one with the new port number.
-	UpdateEnvoyResources(ctx context.Context, old, new Resources) error
-	// DeleteEnvoyResources deletes all Envoy resources in 'resources'.
-	DeleteEnvoyResources(ctx context.Context, resources Resources) error
-
-	// GetNetworkPolicies returns the current version of the network policies with the given names.
-	// If resourceNames is empty, all resources are returned.
-	//
-	// Only used for testing
-	GetNetworkPolicies(resourceNames []string) (map[string]*cilium.NetworkPolicy, error)
-	// UseCurrentNetworkPolicy waits for any pending update on NetworkPolicy to be acked.
-	UseCurrentNetworkPolicy(ep endpoint.EndpointUpdater, policy *policy.L4Policy, wg *completion.WaitGroup)
-	// UpdateNetworkPolicy adds or updates a network policy in the set published to L7 proxies.
-	// When the proxy acknowledges the network policy update, it will result in
-	// a subsequent call to the endpoint's OnProxyPolicyUpdate() function.
-	UpdateNetworkPolicy(ep endpoint.EndpointUpdater, policy *policy.L4Policy, ingressPolicyEnforced, egressPolicyEnforced bool, wg *completion.WaitGroup) (error, func() error)
-	// RemoveNetworkPolicy removes network policies relevant to the specified
-	// endpoint from the set published to L7 proxies, and stops listening for
-	// acks for policies on this endpoint.
-	RemoveNetworkPolicy(ep endpoint.EndpointInfoSource)
-	// RemoveAllNetworkPolicies removes all network policies from the set published
-	// to L7 proxies.
-	RemoveAllNetworkPolicies()
-}
-
-type xdsServer struct {
+type adsServer struct {
 	logger *slog.Logger
+
+	cache xdsnew.Cache
 
 	// socketPath is the path to the gRPC UNIX domain socket.
 	socketPath string
@@ -136,7 +82,7 @@ type xdsServer struct {
 	// accessLogPath is the path to the L7 access logs
 	accessLogPath string
 
-	config xdsServerConfig
+	config adsServerConfig
 
 	// mutex protects accesses to the configuration resources below.
 	mutex lock.RWMutex
@@ -199,15 +145,7 @@ type xdsServer struct {
 	secretManager     certificatemanager.SecretManager
 }
 
-func toAny(pb proto.Message) *anypb.Any {
-	a, err := anypb.New(pb)
-	if err != nil {
-		panic(err.Error())
-	}
-	return a
-}
-
-type xdsServerConfig struct {
+type adsServerConfig struct {
 	envoySocketDir                string
 	proxyGID                      int
 	httpRequestTimeout            int
@@ -226,31 +164,32 @@ type xdsServerConfig struct {
 	httpLingerConfig              int
 }
 
-// newXDSServer creates a new xDS GRPC server.
-func newXDSServer(logger *slog.Logger, restorerPromise promise.Promise[endpointstate.Restorer], ipCache IPCacheEventSource, localEndpointStore *LocalEndpointStore, config xdsServerConfig, secretManager certificatemanager.SecretManager) *xdsServer {
-	xdsServer := &xdsServer{
+// newADSServer creates a new ADS GRPC server.
+func newADSServer(logger *slog.Logger, restorerPromise promise.Promise[endpointstate.Restorer], ipCache IPCacheEventSource, localEndpointStore *LocalEndpointStore, config adsServerConfig, secretManager certificatemanager.SecretManager) *adsServer {
+	adsServer := &adsServer{
 		logger:             logger,
+		cache:              xdsnew.NewCache(logger),
 		restorerPromise:    restorerPromise,
 		listenerCount:      make(map[string]uint),
 		ipCache:            ipCache,
 		localEndpointStore: localEndpointStore,
 
-		socketPath:    getXDSSocketPath(config.envoySocketDir),
-		accessLogPath: getAccessLogSocketPath(config.envoySocketDir),
+		socketPath:    util.GetXDSSocketPath(config.envoySocketDir),
+		accessLogPath: util.GetAccessLogSocketPath(config.envoySocketDir),
 		config:        config,
 		secretManager: secretManager,
 	}
 
-	xdsServer.initializeXdsConfigs()
+	adsServer.initializeXdsConfigs()
 
-	return xdsServer
+	return adsServer
 }
 
-func (s *xdsServer) start(ctx context.Context) error {
-	return s.startXDSGRPCServer(ctx, s.resourceConfig)
+func (s *adsServer) start(ctx context.Context) error {
+	return s.startAdsGRPCServer(ctx, s.cache)
 }
 
-func (s *xdsServer) initializeXdsConfigs() {
+func (s *adsServer) initializeXdsConfigs() {
 	ldsCache := xds.NewCache(s.logger)
 	ldsMutator := xds.NewAckingResourceMutatorWrapper(s.logger, ldsCache, s.config.metrics)
 	ldsConfig := &xds.ResourceTypeConfiguration{
@@ -318,10 +257,10 @@ func (s *xdsServer) initializeXdsConfigs() {
 	}
 }
 
-func (s *xdsServer) newSocketListener() (*net.UnixListener, error) {
+func (s *adsServer) newSocketListener() (*net.UnixListener, error) {
 	// Make sure sockets dir exists
 	socketsDir, _ := filepath.Split(s.socketPath)
-	os.MkdirAll(GetSocketDir(socketsDir), 0o777)
+	os.MkdirAll(util.GetSocketDir(socketsDir), 0o777)
 
 	// Remove/Unlink the old unix domain socket, if any.
 	_ = os.Remove(s.socketPath)
@@ -345,7 +284,7 @@ func (s *xdsServer) newSocketListener() (*net.UnixListener, error) {
 	return socketListener, nil
 }
 
-func (s *xdsServer) stop() {
+func (s *adsServer) stop() {
 	if s.stopFunc != nil {
 		s.stopFunc()
 	}
@@ -354,28 +293,7 @@ func (s *xdsServer) stop() {
 	}
 }
 
-func GetCiliumHttpFilter() *envoy_config_http.HttpFilter {
-	return &envoy_config_http.HttpFilter{
-		Name: "cilium.l7policy",
-		ConfigType: &envoy_config_http.HttpFilter_TypedConfig{
-			TypedConfig: toAny(&cilium.L7Policy{
-				AccessLogPath:  getAccessLogSocketPath(GetSocketDir(option.Config.RunDir)),
-				Denied_403Body: option.Config.HTTP403Message,
-			}),
-		},
-	}
-}
-
-func GetUpstreamCodecFilter() *envoy_config_http.HttpFilter {
-	return &envoy_config_http.HttpFilter{
-		Name: "envoy.filters.http.upstream_codec",
-		ConfigType: &envoy_config_http.HttpFilter_TypedConfig{
-			TypedConfig: toAny(&envoy_upstream_codec.UpstreamCodec{}),
-		},
-	}
-}
-
-func (s *xdsServer) getHttpFilterChainProto(clusterName string, tls bool, isIngress bool) *envoy_config_listener.FilterChain {
+func (s *adsServer) getHttpFilterChainProto(clusterName string, tls bool, isIngress bool) *envoy_config_listener.FilterChain {
 	requestTimeout := int64(s.config.httpRequestTimeout)       // seconds
 	idleTimeout := int64(s.config.httpIdleTimeout)             // seconds
 	maxGRPCTimeout := int64(s.config.httpMaxGRPCTimeout)       // seconds
@@ -396,11 +314,11 @@ func (s *xdsServer) getHttpFilterChainProto(clusterName string, tls bool, isIngr
 		SkipXffAppend:     true,
 		XffNumTrustedHops: xffNumTrustedHops,
 		HttpFilters: []*envoy_config_http.HttpFilter{
-			GetCiliumHttpFilter(),
+			xdsnew.GetCiliumHttpFilter(),
 			{
 				Name: "envoy.filters.http.router",
 				ConfigType: &envoy_config_http.HttpFilter_TypedConfig{
-					TypedConfig: toAny(&envoy_extensions_filters_http_router_v3.Router{}),
+					TypedConfig: xdsnew.ToAny(&envoy_extensions_filters_http_router_v3.Router{}),
 				},
 			},
 		},
@@ -474,12 +392,12 @@ func (s *xdsServer) getHttpFilterChainProto(clusterName string, tls bool, isIngr
 		Filters: []*envoy_config_listener.Filter{{
 			Name: "cilium.network",
 			ConfigType: &envoy_config_listener.Filter_TypedConfig{
-				TypedConfig: toAny(&cilium.NetworkFilter{}),
+				TypedConfig: xdsnew.ToAny(&cilium.NetworkFilter{}),
 			},
 		}, {
 			Name: "envoy.filters.network.http_connection_manager",
 			ConfigType: &envoy_config_listener.Filter_TypedConfig{
-				TypedConfig: toAny(hcmConfig),
+				TypedConfig: xdsnew.ToAny(hcmConfig),
 			},
 		}},
 	}
@@ -491,7 +409,7 @@ func (s *xdsServer) getHttpFilterChainProto(clusterName string, tls bool, isIngr
 		chain.TransportSocket = &envoy_config_core.TransportSocket{
 			Name: "cilium.tls_wrapper",
 			ConfigType: &envoy_config_core.TransportSocket_TypedConfig{
-				TypedConfig: toAny(&cilium.DownstreamTlsWrapperContext{}),
+				TypedConfig: xdsnew.ToAny(&cilium.DownstreamTlsWrapperContext{}),
 			},
 		}
 	}
@@ -505,7 +423,7 @@ func (s *xdsServer) getHttpFilterChainProto(clusterName string, tls bool, isIngr
 // When optional 'filterName' is given, it is configured as the first filter in the chain
 // and 'proxylib' is not configured. In this case the returned filter chain is only used
 // if the applicable network policy specifies 'filterName' as the L7 parser.
-func (s *xdsServer) getTcpFilterChainProto(clusterName string, filterName string, config *anypb.Any, tls bool) *envoy_config_listener.FilterChain {
+func (s *adsServer) getTcpFilterChainProto(clusterName string, filterName string, config *anypb.Any, tls bool) *envoy_config_listener.FilterChain {
 	var filters []*envoy_config_listener.Filter
 
 	// 1. Add the filter 'filterName' to the beginning of the TCP chain with optional 'config', if needed.
@@ -539,7 +457,7 @@ func (s *xdsServer) getTcpFilterChainProto(clusterName string, filterName string
 	filters = append(filters, &envoy_config_listener.Filter{
 		Name: "cilium.network",
 		ConfigType: &envoy_config_listener.Filter_TypedConfig{
-			TypedConfig: toAny(ciliumConfig),
+			TypedConfig: xdsnew.ToAny(ciliumConfig),
 		},
 	})
 
@@ -547,7 +465,7 @@ func (s *xdsServer) getTcpFilterChainProto(clusterName string, filterName string
 	filters = append(filters, &envoy_config_listener.Filter{
 		Name: "envoy.filters.network.tcp_proxy",
 		ConfigType: &envoy_config_listener.Filter_TypedConfig{
-			TypedConfig: toAny(&envoy_config_tcp.TcpProxy{
+			TypedConfig: xdsnew.ToAny(&envoy_config_tcp.TcpProxy{
 				StatPrefix: "tcp_proxy",
 				ClusterSpecifier: &envoy_config_tcp.TcpProxy_Cluster{
 					Cluster: clusterName,
@@ -567,7 +485,7 @@ func (s *xdsServer) getTcpFilterChainProto(clusterName string, filterName string
 		chain.TransportSocket = &envoy_config_core.TransportSocket{
 			Name: "cilium.tls_wrapper",
 			ConfigType: &envoy_config_core.TransportSocket_TypedConfig{
-				TypedConfig: toAny(&cilium.DownstreamTlsWrapperContext{}),
+				TypedConfig: xdsnew.ToAny(&cilium.DownstreamTlsWrapperContext{}),
 			},
 		}
 	} else {
@@ -587,62 +505,7 @@ func (s *xdsServer) getTcpFilterChainProto(clusterName string, filterName string
 	return chain
 }
 
-func getPublicListenerAddress(port uint16, ipv4, ipv6 bool) *envoy_config_core.Address {
-	listenerAddr := "0.0.0.0"
-	if ipv6 {
-		listenerAddr = "::"
-	}
-	return &envoy_config_core.Address{
-		Address: &envoy_config_core.Address_SocketAddress{
-			SocketAddress: &envoy_config_core.SocketAddress{
-				Protocol:      envoy_config_core.SocketAddress_TCP,
-				Address:       listenerAddr,
-				Ipv4Compat:    ipv4 && ipv6,
-				PortSpecifier: &envoy_config_core.SocketAddress_PortValue{PortValue: uint32(port)},
-			},
-		},
-	}
-}
-
-func GetLocalListenerAddresses(port uint16, ipv4, ipv6 bool) (*envoy_config_core.Address, []*envoy_config_listener.AdditionalAddress) {
-	addresses := []*envoy_config_core.Address_SocketAddress{}
-
-	if ipv4 {
-		addresses = append(addresses, &envoy_config_core.Address_SocketAddress{
-			SocketAddress: &envoy_config_core.SocketAddress{
-				Protocol:      envoy_config_core.SocketAddress_TCP,
-				Address:       "127.0.0.1",
-				PortSpecifier: &envoy_config_core.SocketAddress_PortValue{PortValue: uint32(port)},
-			},
-		})
-	}
-
-	if ipv6 {
-		addresses = append(addresses, &envoy_config_core.Address_SocketAddress{
-			SocketAddress: &envoy_config_core.SocketAddress{
-				Protocol:      envoy_config_core.SocketAddress_TCP,
-				Address:       "::1",
-				PortSpecifier: &envoy_config_core.SocketAddress_PortValue{PortValue: uint32(port)},
-			},
-		})
-	}
-
-	var additionalAddress []*envoy_config_listener.AdditionalAddress
-
-	if len(addresses) > 1 {
-		additionalAddress = append(additionalAddress, &envoy_config_listener.AdditionalAddress{
-			Address: &envoy_config_core.Address{
-				Address: addresses[1],
-			},
-		})
-	}
-
-	return &envoy_config_core.Address{
-		Address: addresses[0],
-	}, additionalAddress
-}
-
-func (s *xdsServer) AddAdminListener(port uint16, wg *completion.WaitGroup) {
+func (s *adsServer) AddAdminListener(ctx context.Context, port uint16, wg *completion.WaitGroup) {
 	if port == 0 {
 		return // 0 == disabled
 	}
@@ -650,15 +513,15 @@ func (s *xdsServer) AddAdminListener(port uint16, wg *completion.WaitGroup) {
 		logfields.Port, port,
 	)
 
-	s.addListener(adminListenerName, func() *envoy_config_listener.Listener {
+	s.addListener(ctx, adminListenerNameNew, func() *envoy_config_listener.Listener {
 		hcmConfig := &envoy_config_http.HttpConnectionManager{
-			StatPrefix:       adminListenerName,
+			StatPrefix:       adminListenerNameNew,
 			UseRemoteAddress: &wrapperspb.BoolValue{Value: true},
 			SkipXffAppend:    true,
 			HttpFilters: []*envoy_config_http.HttpFilter{{
 				Name: "envoy.filters.http.router",
 				ConfigType: &envoy_config_http.HttpFilter_TypedConfig{
-					TypedConfig: toAny(&envoy_extensions_filters_http_router_v3.Router{}),
+					TypedConfig: xdsnew.ToAny(&envoy_extensions_filters_http_router_v3.Router{}),
 				},
 			}},
 			InternalAddressConfig: &envoy_config_http.HttpConnectionManager_InternalAddressConfig{
@@ -680,7 +543,7 @@ func (s *xdsServer) AddAdminListener(port uint16, wg *completion.WaitGroup) {
 							Action: &envoy_config_route.Route_Route{
 								Route: &envoy_config_route.RouteAction{
 									ClusterSpecifier: &envoy_config_route.RouteAction_Cluster{
-										Cluster: adminClusterName,
+										Cluster: adminClusterNameNew,
 									},
 								},
 							},
@@ -692,59 +555,37 @@ func (s *xdsServer) AddAdminListener(port uint16, wg *completion.WaitGroup) {
 
 		addr, additionalAddr := GetLocalListenerAddresses(port, option.Config.IPv4Enabled(), option.Config.IPv6Enabled())
 		listenerConf := &envoy_config_listener.Listener{
-			Name:                adminListenerName,
+			Name:                adminListenerNameNew,
 			Address:             addr,
 			AdditionalAddresses: additionalAddr,
 			FilterChains: []*envoy_config_listener.FilterChain{{
 				Filters: []*envoy_config_listener.Filter{{
 					Name: "envoy.filters.network.http_connection_manager",
 					ConfigType: &envoy_config_listener.Filter_TypedConfig{
-						TypedConfig: toAny(hcmConfig),
+						TypedConfig: xdsnew.ToAny(hcmConfig),
 					},
 				}},
 			}},
 		}
 
 		return listenerConf
-	}, wg, func(err error) {
+	}, func(err error) {
 		if err != nil {
 			s.logger.Debug("Envoy: Adding admin listener failed",
 				logfields.Port, port,
 				logfields.Error, err,
 			)
 			// Remove the added listener in case of a failure
-			s.removeListener(adminListenerName, nil, false)
+			s.removeListener(adminListenerNameNew, nil, false)
 		} else {
 			s.logger.Info("Envoy: Listening for Admin API",
 				logfields.Port, port,
 			)
 		}
-	}, false)
+	})
 }
 
-func GetInternalListenerCIDRs(ipv4, ipv6 bool) []*envoy_config_core.CidrRange {
-	var cidrRanges []*envoy_config_core.CidrRange
-
-	if ipv4 {
-		cidrRanges = append(cidrRanges,
-			[]*envoy_config_core.CidrRange{
-				{AddressPrefix: "10.0.0.0", PrefixLen: &wrapperspb.UInt32Value{Value: 8}},
-				{AddressPrefix: "172.16.0.0", PrefixLen: &wrapperspb.UInt32Value{Value: 12}},
-				{AddressPrefix: "192.168.0.0", PrefixLen: &wrapperspb.UInt32Value{Value: 16}},
-				{AddressPrefix: "127.0.0.1", PrefixLen: &wrapperspb.UInt32Value{Value: 32}},
-			}...)
-	}
-
-	if ipv6 {
-		cidrRanges = append(cidrRanges, &envoy_config_core.CidrRange{
-			AddressPrefix: "::1",
-			PrefixLen:     &wrapperspb.UInt32Value{Value: 128},
-		})
-	}
-	return cidrRanges
-}
-
-func (s *xdsServer) AddMetricsListener(port uint16, wg *completion.WaitGroup) {
+func (s *adsServer) AddMetricsListener(port uint16, wg *completion.WaitGroup) {
 	if port == 0 {
 		return // 0 == disabled
 	}
@@ -752,15 +593,15 @@ func (s *xdsServer) AddMetricsListener(port uint16, wg *completion.WaitGroup) {
 		logfields.Port, port,
 	)
 
-	s.addListener(metricsListenerName, func() *envoy_config_listener.Listener {
+	s.addListener(metricsListenerNameNew, func() *envoy_config_listener.Listener {
 		hcmConfig := &envoy_config_http.HttpConnectionManager{
-			StatPrefix:       metricsListenerName,
+			StatPrefix:       metricsListenerNameNew,
 			UseRemoteAddress: &wrapperspb.BoolValue{Value: true},
 			SkipXffAppend:    true,
 			HttpFilters: []*envoy_config_http.HttpFilter{{
 				Name: "envoy.filters.http.router",
 				ConfigType: &envoy_config_http.HttpFilter_TypedConfig{
-					TypedConfig: toAny(&envoy_extensions_filters_http_router_v3.Router{}),
+					TypedConfig: xdsnew.ToAny(&envoy_extensions_filters_http_router_v3.Router{}),
 				},
 			}},
 			InternalAddressConfig: &envoy_config_http.HttpConnectionManager_InternalAddressConfig{
@@ -782,7 +623,7 @@ func (s *xdsServer) AddMetricsListener(port uint16, wg *completion.WaitGroup) {
 							Action: &envoy_config_route.Route_Route{
 								Route: &envoy_config_route.RouteAction{
 									ClusterSpecifier: &envoy_config_route.RouteAction_Cluster{
-										Cluster: adminClusterName,
+										Cluster: adminClusterNameNew,
 									},
 									PrefixRewrite: "/stats/prometheus",
 								},
@@ -794,13 +635,13 @@ func (s *xdsServer) AddMetricsListener(port uint16, wg *completion.WaitGroup) {
 		}
 
 		listenerConf := &envoy_config_listener.Listener{
-			Name:    metricsListenerName,
+			Name:    metricsListenerNameNew,
 			Address: getPublicListenerAddress(port, option.Config.IPv4Enabled(), option.Config.IPv6Enabled()),
 			FilterChains: []*envoy_config_listener.FilterChain{{
 				Filters: []*envoy_config_listener.Filter{{
 					Name: "envoy.filters.network.http_connection_manager",
 					ConfigType: &envoy_config_listener.Filter_TypedConfig{
-						TypedConfig: toAny(hcmConfig),
+						TypedConfig: xdsnew.ToAny(hcmConfig),
 					},
 				}},
 			}},
@@ -814,21 +655,18 @@ func (s *xdsServer) AddMetricsListener(port uint16, wg *completion.WaitGroup) {
 				logfields.Error, err,
 			)
 			// Remove the added listener in case of a failure
-			s.removeListener(metricsListenerName, nil, false)
+			s.removeListener(metricsListenerNameNew, nil, false)
 		} else {
 			s.logger.Info("Envoy: Listening for prometheus metrics",
 				logfields.Port, port,
 			)
 		}
-	}, false)
+	})
 }
 
 // addListener either reuses an existing listener with 'name', or creates a new one.
 // 'listenerConf()' is only called if a new listener is being created.
-func (s *xdsServer) addListener(name string, listenerConf func() *envoy_config_listener.Listener, wg *completion.WaitGroup, cb func(err error), isProxyListener bool) error {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
+func (s *adsServer) addListener(ctx context.Context, name string, listenerConf func() *envoy_config_listener.Listener, cb func(err error)) error {
 	listenerConfig := listenerConf()
 	if option.Config.EnableBPFTProxy {
 		// Envoy since 1.20.0 uses SO_REUSEPORT on listeners by default.
@@ -840,129 +678,40 @@ func (s *xdsServer) addListener(name string, listenerConf func() *envoy_config_l
 		return fmt.Errorf("Envoy: Could not validate Listener %s: %w", listenerConfig.String(), err)
 	}
 
-	count := s.listenerCount[name]
-	if count == 0 {
-		if isProxyListener {
-			s.proxyListeners++
-		}
-		s.logger.Info("Envoy: Upserting new listener",
-			logfields.Listener, name,
-		)
-	}
-	count++
-	s.listenerCount[name] = count
+	// Host proxy uses "127.0.0.1" as the nodeID
+	nodeId := "127.0.0.1"
 
-	s.listenerMutator.Upsert(ListenerTypeURL, name, listenerConfig, []string{"127.0.0.1"}, wg,
-		func(err error) {
-			if cb != nil {
-				cb(err)
-			}
-		})
-	return nil
-}
-
-// upsertListener either updates an existing LDS listener with 'name', or creates a new one.
-func (s *xdsServer) upsertListener(name string, listenerConf *envoy_config_listener.Listener, wg *completion.WaitGroup, callback func(error)) xds.AckingResourceMutatorRevertFunc {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	// 'callback' is not called if there is no change and this configuration has already been acked.
-	return s.listenerMutator.Upsert(ListenerTypeURL, name, listenerConf, []string{"127.0.0.1"}, wg, callback)
-}
 
-// deleteListener deletes an LDS Envoy Listener.
-func (s *xdsServer) deleteListener(name string, wg *completion.WaitGroup, callback func(error)) xds.AckingResourceMutatorRevertFunc {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	// 'callback' is not called if there is no change and this configuration has already been acked.
-	return s.listenerMutator.Delete(ListenerTypeURL, name, []string{"127.0.0.1"}, wg, callback)
-}
+	// todo(nezdolik): getting current resources and adding new listener may need to be done atomically
+	resources := s.cache.GetAllResources(nodeId)
+	resources.Listeners[listenerConfig.Name] = listenerConfig
 
-// upsertRoute either updates an existing RDS route with 'name', or creates a new one.
-func (s *xdsServer) upsertRoute(name string, conf *envoy_config_route.RouteConfiguration, wg *completion.WaitGroup) xds.AckingResourceMutatorRevertFunc {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	return s.routeMutator.Upsert(RouteTypeURL, name, conf, []string{"127.0.0.1"}, wg, nil)
-}
-
-// deleteRoute deletes an RDS Route.
-func (s *xdsServer) deleteRoute(name string, wg *completion.WaitGroup) xds.AckingResourceMutatorRevertFunc {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	return s.routeMutator.Delete(RouteTypeURL, name, []string{"127.0.0.1"}, wg, nil)
-}
-
-// upsertCluster either updates an existing CDS cluster with 'name', or creates a new one.
-func (s *xdsServer) upsertCluster(name string, conf *envoy_config_cluster.Cluster, wg *completion.WaitGroup) xds.AckingResourceMutatorRevertFunc {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	return s.clusterMutator.Upsert(ClusterTypeURL, name, conf, []string{"127.0.0.1"}, wg, nil)
-}
-
-// deleteCluster deletes an CDS cluster.
-func (s *xdsServer) deleteCluster(name string, wg *completion.WaitGroup) xds.AckingResourceMutatorRevertFunc {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	return s.clusterMutator.Delete(ClusterTypeURL, name, []string{"127.0.0.1"}, wg, nil)
-}
-
-// upsertEndpoint either updates an existing EDS endpoint with 'name', or creates a new one.
-func (s *xdsServer) upsertEndpoint(name string, conf *envoy_config_endpoint.ClusterLoadAssignment, wg *completion.WaitGroup) xds.AckingResourceMutatorRevertFunc {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	return s.endpointMutator.Upsert(EndpointTypeURL, name, conf, []string{"127.0.0.1"}, wg, nil)
-}
-
-// deleteEndpoint deletes an EDS endpoint.
-func (s *xdsServer) deleteEndpoint(name string, wg *completion.WaitGroup) xds.AckingResourceMutatorRevertFunc {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	return s.endpointMutator.Delete(EndpointTypeURL, name, []string{"127.0.0.1"}, wg, nil)
-}
-
-// upsertSecret either updates an existing SDS secret with 'name', or creates a new one.
-func (s *xdsServer) upsertSecret(name string, conf *envoy_config_tls.Secret, wg *completion.WaitGroup) xds.AckingResourceMutatorRevertFunc {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	return s.secretMutator.Upsert(SecretTypeURL, name, conf, []string{"127.0.0.1"}, wg, nil)
-}
-
-// deleteSecret deletes an SDS secret.
-func (s *xdsServer) deleteSecret(name string, wg *completion.WaitGroup) xds.AckingResourceMutatorRevertFunc {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	return s.secretMutator.Delete(SecretTypeURL, name, []string{"127.0.0.1"}, wg, nil)
-}
-
-func getListenerFilter(isIngress bool, useOriginalSourceAddr bool, proxyPort uint16, lingerConfig int) *envoy_config_listener.ListenerFilter {
-	conf := &cilium.BpfMetadata{
-		IsIngress:                isIngress,
-		UseOriginalSourceAddress: useOriginalSourceAddr,
-		BpfRoot:                  bpf.BPFFSRoot(),
-		IsL7Lb:                   false,
-		ProxyId:                  uint32(proxyPort),
-		IpcacheName:              ipcache.Name,
+	updatedSnapshot, err := s.cache.GenerateSnapshot(resources, s.logger)
+	if err != nil {
+		s.logger.Error("Error generating snapshot %v: %q", resources, err)
+		cb(err)
+		return err
 	}
 
-	if lingerConfig >= 0 {
-		lingerTime := uint32(lingerConfig)
-		conf.OriginalSourceSoLingerTime = &lingerTime
+	err = s.cache.SetSnapshot(ctx, nodeId, updatedSnapshot)
+	if err == nil {
+		s.cache.SetResources(nodeId, resources)
+	} else {
+		s.logger.Error("Error setting snapshot: %q", err)
+		cb(err)
 	}
-
-	return &envoy_config_listener.ListenerFilter{
-		Name: "cilium.bpf_metadata",
-		ConfigType: &envoy_config_listener.ListenerFilter_TypedConfig{
-			TypedConfig: toAny(conf),
-		},
-	}
+	return err
 }
 
-func (s *xdsServer) getListenerConf(name string, kind policy.L7ParserType, port uint16, isIngress bool, mayUseOriginalSourceAddr bool) *envoy_config_listener.Listener {
-	clusterName := egressClusterName
-	tlsClusterName := egressTLSClusterName
+func (s *adsServer) getListenerConf(name string, kind policy.L7ParserType, port uint16, isIngress bool, mayUseOriginalSourceAddr bool) *envoy_config_listener.Listener {
+	clusterName := egressClusterNameNew
+	tlsClusterName := egressTLSClusterNameNew
 
 	if isIngress {
-		clusterName = ingressClusterName
-		tlsClusterName = ingressTLSClusterName
+		clusterName = ingressClusterNameNew
+		tlsClusterName = ingressTLSClusterNameNew
 	}
 
 	addr, additionalAddr := GetLocalListenerAddresses(port, option.Config.IPv4Enabled(), option.Config.IPv6Enabled())
@@ -980,7 +729,7 @@ func (s *xdsServer) getListenerConf(name string, kind policy.L7ParserType, port 
 			{
 				Name: "envoy.filters.listener.tls_inspector",
 				ConfigType: &envoy_config_listener.ListenerFilter_TypedConfig{
-					TypedConfig: toAny(&envoy_extensions_listener_tls_inspector_v3.TlsInspector{}),
+					TypedConfig: xdsnew.ToAny(&envoy_extensions_listener_tls_inspector_v3.TlsInspector{}),
 				},
 			},
 			getListenerFilter(isIngress, mayUseOriginalSourceAddr, port, lingerConfig),
@@ -1006,13 +755,13 @@ func (s *xdsServer) getListenerConf(name string, kind policy.L7ParserType, port 
 
 		// Experimental TCP chain for MySQL 5.x
 		listenerConf.FilterChains = append(listenerConf.FilterChains, s.getTcpFilterChainProto(clusterName,
-			"envoy.filters.network.mysql_proxy", toAny(&envoy_mysql_proxy.MySQLProxy{
+			"envoy.filters.network.mysql_proxy", xdsnew.ToAny(&envoy_mysql_proxy.MySQLProxy{
 				StatPrefix: "mysql",
 			}), false))
 
 		// Experimental TCP chain for MongoDB
 		listenerConf.FilterChains = append(listenerConf.FilterChains, s.getTcpFilterChainProto(clusterName,
-			"envoy.filters.network.mongo_proxy", toAny(&envoy_mongo_proxy.MongoProxy{
+			"envoy.filters.network.mongo_proxy", xdsnew.ToAny(&envoy_mongo_proxy.MongoProxy{
 				StatPrefix:          "mongo",
 				EmitDynamicMetadata: true,
 			}), false))
@@ -1020,24 +769,24 @@ func (s *xdsServer) getListenerConf(name string, kind policy.L7ParserType, port 
 	return listenerConf
 }
 
-func (s *xdsServer) AddListener(name string, kind policy.L7ParserType, port uint16, isIngress bool, mayUseOriginalSourceAddr bool, wg *completion.WaitGroup, cb func(err error)) error {
+func (s *adsServer) AddListener(ctx context.Context, name string, kind policy.L7ParserType, port uint16, isIngress bool, mayUseOriginalSourceAddr bool, wg *completion.WaitGroup, cb func(err error)) error {
 	s.logger.Debug("Envoy: AddListener",
 		logfields.L7ParserType, kind,
 		logfields.Listener, name,
 		logfields.MayUseOriginalSourceAddr, mayUseOriginalSourceAddr,
 	)
 
-	return s.addListener(name, func() *envoy_config_listener.Listener {
+	return s.addListener(ctx, name, func() *envoy_config_listener.Listener {
 		return s.getListenerConf(name, kind, port, isIngress, mayUseOriginalSourceAddr)
-	}, wg, cb, true)
+	}, cb)
 }
 
-func (s *xdsServer) RemoveListener(name string, wg *completion.WaitGroup) xds.AckingResourceMutatorRevertFunc {
+func (s *adsServer) RemoveListener(name string, wg *completion.WaitGroup) xds.AckingResourceMutatorRevertFunc {
 	return s.removeListener(name, wg, true)
 }
 
 // removeListener removes an existing Envoy Listener.
-func (s *xdsServer) removeListener(name string, wg *completion.WaitGroup, isProxyListener bool) xds.AckingResourceMutatorRevertFunc {
+func (s *adsServer) removeListener(name string, wg *completion.WaitGroup, isProxyListener bool) xds.AckingResourceMutatorRevertFunc {
 	s.logger.Debug("Envoy: RemoveListener",
 		logfields.Listener, name,
 	)
@@ -1081,213 +830,7 @@ func (s *xdsServer) removeListener(name string, wg *completion.WaitGroup, isProx
 	}
 }
 
-func getL7Rules(l7Rules []api.PortRuleL7, l7Proto string) *cilium.L7NetworkPolicyRules {
-	allowRules := make([]*cilium.L7NetworkPolicyRule, 0, len(l7Rules))
-	denyRules := make([]*cilium.L7NetworkPolicyRule, 0, len(l7Rules))
-	useEnvoyMetadataMatcher := strings.HasPrefix(l7Proto, "envoy.")
-
-	for _, l7 := range l7Rules {
-		if useEnvoyMetadataMatcher {
-			envoyFilterName := l7Proto
-			rule := &cilium.L7NetworkPolicyRule{MetadataRule: make([]*envoy_type_matcher.MetadataMatcher, 0, len(l7))}
-			denyRule := false
-			for k, v := range l7 {
-				switch k {
-				case "action":
-					switch v {
-					case "deny":
-						denyRule = true
-					}
-				default:
-					// map key to path segments and value to value matcher
-					// For now only one path segment is allowed
-					segments := strings.Split(k, "/")
-					var path []*envoy_type_matcher.MetadataMatcher_PathSegment
-					for _, key := range segments {
-						path = append(path, &envoy_type_matcher.MetadataMatcher_PathSegment{
-							Segment: &envoy_type_matcher.MetadataMatcher_PathSegment_Key{Key: key},
-						})
-					}
-					var value *envoy_type_matcher.ValueMatcher
-					if len(v) == 0 {
-						value = &envoy_type_matcher.ValueMatcher{
-							MatchPattern: &envoy_type_matcher.ValueMatcher_PresentMatch{
-								PresentMatch: true,
-							},
-						}
-					} else {
-						value = &envoy_type_matcher.ValueMatcher{
-							MatchPattern: &envoy_type_matcher.ValueMatcher_ListMatch{
-								ListMatch: &envoy_type_matcher.ListMatcher{
-									MatchPattern: &envoy_type_matcher.ListMatcher_OneOf{
-										OneOf: &envoy_type_matcher.ValueMatcher{
-											MatchPattern: &envoy_type_matcher.ValueMatcher_StringMatch{
-												StringMatch: &envoy_type_matcher.StringMatcher{
-													MatchPattern: &envoy_type_matcher.StringMatcher_Exact{
-														Exact: v,
-													},
-													IgnoreCase: false,
-												},
-											},
-										},
-									},
-								},
-							},
-						}
-					}
-					rule.MetadataRule = append(rule.MetadataRule, &envoy_type_matcher.MetadataMatcher{
-						Filter: envoyFilterName,
-						Path:   path,
-						Value:  value,
-					})
-				}
-			}
-			if denyRule {
-				denyRules = append(denyRules, rule)
-			} else {
-				allowRules = append(allowRules, rule)
-			}
-		} else {
-			// proxylib go extension key/value policy
-			rule := &cilium.L7NetworkPolicyRule{Rule: make(map[string]string, len(l7))}
-			maps.Copy(rule.Rule, l7)
-			allowRules = append(allowRules, rule)
-		}
-	}
-
-	rules := &cilium.L7NetworkPolicyRules{}
-	if len(allowRules) > 0 {
-		rules.L7AllowRules = allowRules
-	}
-	if len(denyRules) > 0 {
-		rules.L7DenyRules = denyRules
-	}
-	return rules
-}
-
-func getKafkaL7Rules(l7Rules []kafka.PortRule) *cilium.KafkaNetworkPolicyRules {
-	allowRules := make([]*cilium.KafkaNetworkPolicyRule, 0, len(l7Rules))
-	for _, kr := range l7Rules {
-		rule := &cilium.KafkaNetworkPolicyRule{
-			ApiVersion: kr.GetAPIVersion(),
-			ApiKeys:    kr.GetAPIKeys(),
-			ClientId:   kr.ClientID,
-			Topic:      kr.Topic,
-		}
-		allowRules = append(allowRules, rule)
-	}
-
-	rules := &cilium.KafkaNetworkPolicyRules{}
-	if len(allowRules) > 0 {
-		rules.KafkaRules = allowRules
-	}
-	return rules
-}
-
-var CiliumXDSConfigSource = &envoy_config_core.ConfigSource{
-	InitialFetchTimeout: &durationpb.Duration{Seconds: 30},
-	ResourceApiVersion:  envoy_config_core.ApiVersion_V3,
-	ConfigSourceSpecifier: &envoy_config_core.ConfigSource_ApiConfigSource{
-		ApiConfigSource: &envoy_config_core.ApiConfigSource{
-			ApiType:                   envoy_config_core.ApiConfigSource_GRPC,
-			TransportApiVersion:       envoy_config_core.ApiVersion_V3,
-			SetNodeOnFirstMessageOnly: true,
-			GrpcServices: []*envoy_config_core.GrpcService{
-				{
-					TargetSpecifier: &envoy_config_core.GrpcService_EnvoyGrpc_{
-						EnvoyGrpc: &envoy_config_core.GrpcService_EnvoyGrpc{
-							ClusterName: CiliumXDSClusterName,
-						},
-					},
-				},
-			},
-		},
-	},
-}
-
-// toEnvoyOriginatingTLSContext converts a "policy" TLS context (i.e., from a CiliumNetworkPolicy or
-// CiliumClusterwideNetworkPolicy) for originating TLS (i.e., verifying TLS connections from *outside*) into a "cilium
-// envoy" TLS context (i.e., for the Cilium proxy plugin for Envoy).
-//
-// useFullTLSContext is used to retain an old, buggy behavior where Secrets may contain a `ca.crt` field as well, which can
-// lead Envoy to enforce client TLS between the client pod and the interception point in Envoy. In this case,
-// Secrets will be sent to Envoy via the old, inline-in-NPDS method, and _not_ via SDS, and so this method will
-// return whatever is in the *policy.TLSContext.
-func toEnvoyOriginatingTLSContext(tls *policy.TLSContext, policySecretsNamespace string, useSDS, useFullTLSContext bool) *cilium.TLSContext {
-	if !tls.FromFile && useSDS && policySecretsNamespace != "" {
-		// If values are not present in these fields, then we should be using SDS,
-		// and Secret should be populated.
-		if tls.Secret.String() != "/" {
-			return &cilium.TLSContext{
-				ValidationContextSdsSecret: namespacedNametoSyncedSDSSecretName(tls.Secret, policySecretsNamespace),
-			}
-		}
-		// This code _should_ be unreachable, because NetworkPolicy input validation does not allow
-		// the Secret fields to be empty, so panic.
-		panic("SDS Policy secrets cannot be empty, this should not be possible, please log an issue")
-	}
-
-	// If we are not using a synchronized secret or are reading from file, useFullTLSContext
-	// matters.
-	if useFullTLSContext {
-		return &cilium.TLSContext{
-			CertificateChain: tls.CertificateChain,
-			PrivateKey:       tls.PrivateKey,
-			TrustedCa:        tls.TrustedCA,
-		}
-	}
-
-	return &cilium.TLSContext{
-		TrustedCa: tls.TrustedCA,
-	}
-}
-
-// toEnvoyTerminatingTLSContext converts a "policy" TLS context (i.e., from a CiliumNetworkPolicy or
-// CiliumClusterwideNetworkPolicy) for terminating TLS (i.e., providing a valid cert to clients *inside*) into a "cilium
-// envoy" TLS context (i.e., for the Cilium proxy plugin for Envoy).
-//
-// useFullTLSContext is used to retain an old, buggy behavior where Secrets may contain a `ca.crt` field as well, which can
-// lead Envoy to enforce client TLS between the client pod and the interception point in Envoy. In this case,
-// Secrets will be sent to Envoy via the old, inline-in-NPDS method, and _not_ via SDS, and so this method will
-// return whatever is in the *policy.TLSContext.
-func toEnvoyTerminatingTLSContext(tls *policy.TLSContext, policySecretsNamespace string, useSDS, useFullTLSContext bool) *cilium.TLSContext {
-	if !tls.FromFile && useSDS && policySecretsNamespace != "" {
-		// If the values have been read from Kubernetes, then we should be using SDS,
-		// and Secret should be populated.
-		if tls.Secret.String() != "/" {
-			return &cilium.TLSContext{
-				TlsSdsSecret: namespacedNametoSyncedSDSSecretName(tls.Secret, policySecretsNamespace),
-			}
-		}
-		// This code _should_ be unreachable, because NetworkPolicy input validation does not allow
-		// the Secret fields to be empty, so panic.
-		panic("SDS Policy secrets cannot be empty, this should not be possible, please log an issue")
-	}
-
-	// If we are not using a synchronized secret or are reading from file, useFullTLSContext
-	// matters.
-	if useFullTLSContext {
-		return &cilium.TLSContext{
-			CertificateChain: tls.CertificateChain,
-			PrivateKey:       tls.PrivateKey,
-			TrustedCa:        tls.TrustedCA,
-		}
-	}
-
-	return &cilium.TLSContext{
-		CertificateChain: tls.CertificateChain,
-		PrivateKey:       tls.PrivateKey,
-	}
-}
-
-func namespacedNametoSyncedSDSSecretName(namespacedName types.NamespacedName, policySecretsNamespace string) string {
-	if policySecretsNamespace == "" {
-		return fmt.Sprintf("%s/%s", namespacedName.Namespace, namespacedName.Name)
-	}
-	return fmt.Sprintf("%s/%s-%s", policySecretsNamespace, namespacedName.Namespace, namespacedName.Name)
-}
-
-func (s *xdsServer) getPortNetworkPolicyRule(ep endpoint.EndpointUpdater, version *versioned.VersionHandle, sel policy.CachedSelector, l7Rules *policy.PerSelectorPolicy, useFullTLSContext, useSDS bool, policySecretsNamespace string) (*cilium.PortNetworkPolicyRule, bool) {
+func (s *adsServer) getPortNetworkPolicyRule(ep endpoint.EndpointUpdater, version *versioned.VersionHandle, sel policy.CachedSelector, l7Rules *policy.PerSelectorPolicy, useFullTLSContext, useSDS bool, policySecretsNamespace string) (*cilium.PortNetworkPolicyRule, bool) {
 	r := &cilium.PortNetworkPolicyRule{
 		Deny: l7Rules.GetDeny(),
 	}
@@ -1400,7 +943,7 @@ func (s *xdsServer) getPortNetworkPolicyRule(ep endpoint.EndpointUpdater, versio
 
 // getWildcardNetworkPolicyRules returns the rules for port 0, which
 // will be considered after port-specific rules.
-func (s *xdsServer) getWildcardNetworkPolicyRules(version *versioned.VersionHandle, selectors policy.L7DataMap) (rules []*cilium.PortNetworkPolicyRule) {
+func (s *adsServer) getWildcardNetworkPolicyRules(version *versioned.VersionHandle, selectors policy.L7DataMap) (rules []*cilium.PortNetworkPolicyRule) {
 	// selections are pre-sorted, so sorting is only needed if merging selections from multiple selectors
 	if len(selectors) == 1 {
 		for sel, l7 := range selectors {
@@ -1496,11 +1039,11 @@ func (s *xdsServer) getWildcardNetworkPolicyRules(version *versioned.VersionHand
 	return rules
 }
 
-func (s *xdsServer) getDirectionNetworkPolicy(ep endpoint.EndpointUpdater, l4Policy policy.L4PolicyMap, policyEnforced bool, useFullTLSContext, useSDS bool, dir string, policySecretsNamespace string) []*cilium.PortNetworkPolicy {
+func (s *adsServer) getDirectionNetworkPolicy(ep endpoint.EndpointUpdater, l4Policy policy.L4PolicyMap, policyEnforced bool, useFullTLSContext, useSDS bool, dir string, policySecretsNamespace string) []*cilium.PortNetworkPolicy {
 	// TODO: integrate visibility with enforced policy
 	if !policyEnforced {
 		// Always allow all ports
-		return []*cilium.PortNetworkPolicy{allowAllTCPPortNetworkPolicy}
+		return []*cilium.PortNetworkPolicy{allowAllTCPPortNetworkPolicyNew}
 	}
 
 	if l4Policy == nil || l4Policy.Len() == 0 {
@@ -1680,7 +1223,7 @@ func (s *xdsServer) getDirectionNetworkPolicy(ep endpoint.EndpointUpdater, l4Pol
 }
 
 // getNetworkPolicy converts a network policy into a cilium.NetworkPolicy.
-func (s *xdsServer) getNetworkPolicy(ep endpoint.EndpointUpdater, names []string, l4Policy *policy.L4Policy,
+func (s *adsServer) getNetworkPolicy(ep endpoint.EndpointUpdater, names []string, l4Policy *policy.L4Policy,
 	ingressPolicyEnforced, egressPolicyEnforced, useFullTLSContext, useSDS bool, policySecretsNamespace string,
 ) *cilium.NetworkPolicy {
 	p := &cilium.NetworkPolicy{
@@ -1701,23 +1244,7 @@ func (s *xdsServer) getNetworkPolicy(ep endpoint.EndpointUpdater, names []string
 	return p
 }
 
-// return the Envoy proxy node IDs that need to ACK the policy.
-func getNodeIDs(ep endpoint.EndpointUpdater, policy *policy.L4Policy) []string {
-	nodeIDs := make([]string, 0, 1)
-
-	// Host proxy uses "127.0.0.1" as the nodeID
-	nodeIDs = append(nodeIDs, "127.0.0.1")
-	// Require additional ACK from proxylib if policy has proxylib redirects
-	// Note that if a previous policy had a proxylib redirect and this one does not,
-	// we only wait for the ACK from the main Envoy node ID.
-	if policy.HasProxylibRedirect() {
-		// Proxylib uses "127.0.0.2" as the nodeID
-		nodeIDs = append(nodeIDs, "127.0.0.2")
-	}
-	return nodeIDs
-}
-
-func (s *xdsServer) UseCurrentNetworkPolicy(ep endpoint.EndpointUpdater, policy *policy.L4Policy, wg *completion.WaitGroup) {
+func (s *adsServer) UseCurrentNetworkPolicy(ep endpoint.EndpointUpdater, policy *policy.L4Policy, wg *completion.WaitGroup) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -1728,13 +1255,13 @@ func (s *xdsServer) UseCurrentNetworkPolicy(ep endpoint.EndpointUpdater, policy 
 		wg = nil
 	}
 
-	nodeIDs := getNodeIDs(ep, policy)
+	nodeIDs := xdsnew.GetNodeIDs(ep, policy)
 
 	// only wait for the most current policy to be acked when no (new) policy is given
 	s.NetworkPolicyMutator.UseCurrent(NetworkPolicyTypeURL, nodeIDs, wg)
 }
 
-func (s *xdsServer) UpdateNetworkPolicy(ep endpoint.EndpointUpdater, policy *policy.L4Policy,
+func (s *adsServer) UpdateNetworkPolicy(ep endpoint.EndpointUpdater, policy *policy.L4Policy,
 	ingressPolicyEnforced, egressPolicyEnforced bool, wg *completion.WaitGroup,
 ) (error, func() error) {
 	s.mutex.Lock()
@@ -1781,7 +1308,7 @@ func (s *xdsServer) UpdateNetworkPolicy(ep endpoint.EndpointUpdater, policy *pol
 		}
 	}
 	epID := ep.GetID()
-	nodeIDs := getNodeIDs(ep, policy)
+	nodeIDs := xdsnew.GetNodeIDs(ep, policy)
 	resourceName := strconv.FormatUint(epID, 10)
 	revertFunc := s.NetworkPolicyMutator.Upsert(NetworkPolicyTypeURL, resourceName, networkPolicy, nodeIDs, wg, callback)
 	revertUpdatedNetworkPolicyEndpoints := make(map[string]endpoint.EndpointUpdater, len(ips))
@@ -1814,7 +1341,7 @@ func (s *xdsServer) UpdateNetworkPolicy(ep endpoint.EndpointUpdater, policy *pol
 	}
 }
 
-func (s *xdsServer) RemoveNetworkPolicy(ep endpoint.EndpointInfoSource) {
+func (s *adsServer) RemoveNetworkPolicy(ep endpoint.EndpointInfoSource) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -1834,11 +1361,11 @@ func (s *xdsServer) RemoveNetworkPolicy(ep endpoint.EndpointInfoSource) {
 	}
 }
 
-func (s *xdsServer) RemoveAllNetworkPolicies() {
+func (s *adsServer) RemoveAllNetworkPolicies() {
 	s.networkPolicyCache.Clear(NetworkPolicyTypeURL)
 }
 
-func (s *xdsServer) GetNetworkPolicies(resourceNames []string) (map[string]*cilium.NetworkPolicy, error) {
+func (s *adsServer) GetNetworkPolicies(resourceNames []string) (map[string]*cilium.NetworkPolicy, error) {
 	resources, err := s.networkPolicyCache.GetResources(NetworkPolicyTypeURL, 0, "", resourceNames)
 	if err != nil {
 		return nil, err
@@ -1853,51 +1380,7 @@ func (s *xdsServer) GetNetworkPolicies(resourceNames []string) (map[string]*cili
 	return networkPolicies, nil
 }
 
-// Resources contains all Envoy resources parsed from a CiliumEnvoyConfig CRD
-type Resources struct {
-	Listeners []*envoy_config_listener.Listener
-	Secrets   []*envoy_config_tls.Secret
-	Routes    []*envoy_config_route.RouteConfiguration
-	Clusters  []*envoy_config_cluster.Cluster
-	Endpoints []*envoy_config_endpoint.ClusterLoadAssignment
-
-	// Callback functions that are called if the corresponding Listener change was successfully acked by Envoy
-	PortAllocationCallbacks map[string]func(context.Context) error `json:"-" yaml:"-"`
-}
-
-// ListenersAddedOrDeleted returns 'true' if a listener is added or removed when updating from 'old'
-// to 'new'
-func (old *Resources) ListenersAddedOrDeleted(new *Resources) bool {
-	// Typically the number of listeners in a CEC is small (e.g, one), so it should be OK to
-	// scan the slices like here
-	for _, nl := range new.Listeners {
-		found := false
-		for _, ol := range old.Listeners {
-			if ol.Name == nl.Name {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return true // a listener was added
-		}
-	}
-	for _, ol := range old.Listeners {
-		found := false
-		for _, nl := range new.Listeners {
-			if nl.Name == ol.Name {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return true // a listener was removed
-		}
-	}
-	return false
-}
-
-func (s *xdsServer) UpsertEnvoyResources(ctx context.Context, resources Resources) error {
+func (s *adsServer) updateSnapshot(ctx context.Context, resources xds.Resources) error {
 	if option.Config.Debug {
 		msg := ""
 		sep := ""
@@ -1921,345 +1404,80 @@ func (s *xdsServer) UpsertEnvoyResources(ctx context.Context, resources Resource
 			msg += fmt.Sprintf("%s%d secrets", sep, len(resources.Secrets))
 		}
 
-		s.logger.Debug("UpsertEnvoyResources: Upserting Envoy resources",
+		s.logger.Debug("updateXdsSnapshot: Updating Envoy resources",
 			logfields.Resource, msg,
 		)
 	}
-	var wg *completion.WaitGroup
-	// Listener config may fail if it refers to a cluster that has not been added yet, so we
-	// must wait for Envoy to ACK cluster config before adding Listeners to be sure Listener
-	// config does not fail for this reason.
-	// Enable wait before new Listeners are added if clusters are also added.
-	if len(resources.Listeners) > 0 && len(resources.Clusters) > 0 {
-		wg = completion.NewWaitGroup(ctx)
-	}
-	var revertFuncs xds.AckingResourceMutatorRevertFuncList
-	// Do not wait for the addition of routes, clusters, endpoints, routes,
-	// or secrets as there are no guarantees that these additions will be
-	// acked. For example, if the listener referring to was already deleted
-	// earlier, there are no references to the deleted resources anymore,
-	// in which case we could wait forever for the ACKs. This could also
-	// happen if there is no listener referring to these named
-	// resources to begin with.
-	// If both listeners and clusters are added then wait for clusters.
 	for _, r := range resources.Secrets {
-		s.logger.Debug("Envoy upsertSecret",
+		s.logger.Debug("Envoy updateSecret",
 			logfields.ResourceName, r.Name,
 		)
-		revertFuncs = append(revertFuncs, s.upsertSecret(r.Name, r, nil))
 	}
 	for _, r := range resources.Endpoints {
-		s.logger.Debug("Envoy upsertEndpoint",
+		s.logger.Debug("Envoy updateEndpoint",
 			logfields.ResourceName, r.ClusterName,
 			logfields.Resource, r,
 		)
-		revertFuncs = append(revertFuncs, s.upsertEndpoint(r.ClusterName, r, nil))
 	}
 	for _, r := range resources.Clusters {
-		s.logger.Debug("Envoy upsertCluster",
+		s.logger.Debug("Envoy updateCluster",
 			logfields.ResourceName, r.Name,
 			logfields.Resource, r,
 		)
-		revertFuncs = append(revertFuncs, s.upsertCluster(r.Name, r, wg))
 	}
 	for _, r := range resources.Routes {
-		s.logger.Debug("Envoy upsertRoute",
+		s.logger.Debug("Envoy updateRoute",
 			logfields.ResourceName, r.Name,
 			logfields.Resource, r,
 		)
-		revertFuncs = append(revertFuncs, s.upsertRoute(r.Name, r, nil))
 	}
-	// Wait before new Listeners are added if clusters were also added above.
-	if wg != nil {
-		start := time.Now()
-		s.logger.Debug("UpsertEnvoyResources: Waiting for cluster updates to complete...")
-		err := wg.Wait()
-		s.logger.Debug("UpsertEnvoyResources: Wait time for cluster updates",
-			logfields.Duration, time.Since(start),
-			logfields.Error, err,
-		)
 
-		// revert all changes in case of failure
+	// Host proxy uses "127.0.0.1" as the nodeID
+	nodeId := "127.0.0.1"
+
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	oldSnapshot, err := s.cache.GetSnapshot(nodeId)
+	if err != nil {
+		return err
+	}
+	newSnapshot, err := s.cache.GenerateSnapshot(resources, s.logger)
+	if err != nil {
+		return err
+	}
+	if s.cache.AreDifferentSnapshots(oldSnapshot, newSnapshot) {
+		err = s.cache.SetSnapshot(ctx, nodeId, newSnapshot)
 		if err != nil {
-			revertFuncs.Revert(nil)
-			s.logger.Debug("UpsertEnvoyResources: Finished reverting failed xDS transactions")
+			s.logger.Error("Error setting snapshot %v: %q", newSnapshot, err)
 			return err
 		}
-		wg = nil
+	} else {
+		s.logger.Debug("updateXdsSnapshot: Snapshots are identical, skipping update")
 	}
-	// Wait only if new Listeners are added, as they will always be acked.
-	// (unreferenced routes or endpoints (and maybe clusters) are not ACKed or NACKed).
-	if len(resources.Listeners) > 0 {
-		wg = completion.NewWaitGroup(ctx)
-	}
-	for _, r := range resources.Listeners {
-		s.logger.Debug("Envoy upsertListener",
-			logfields.ResourceName, r.Name,
-			logfields.Resource, r,
-		)
-		listenerName := r.Name
-		revertFuncs = append(revertFuncs, s.upsertListener(r.Name, r, wg,
-			// this callback is not called if there is no change
-			func(err error) {
-				if err == nil && resources.PortAllocationCallbacks[listenerName] != nil {
-					if callbackErr := resources.PortAllocationCallbacks[listenerName](ctx); callbackErr != nil {
-						s.logger.Warn("Failure in port allocation callback",
-							logfields.Error, callbackErr,
-						)
-					}
-				}
-			}))
-	}
-	if wg != nil {
-		start := time.Now()
-		s.logger.Debug("UpsertEnvoyResources: Waiting for proxy updates to complete...")
-		err := wg.Wait()
-		s.logger.Debug("UpsertEnvoyResources: Wait time for proxy updates",
-			logfields.Duration, time.Since(start),
-			logfields.Error, err,
-		)
 
-		// revert all changes in case of failure
-		if err != nil {
-			revertFuncs.Revert(nil)
-			s.logger.Debug("UpsertEnvoyResources: Finished reverting failed xDS transactions")
-		}
+	err = s.cache.SetSnapshot(ctx, nodeId, newSnapshot)
+	if err != nil {
+		s.cache.SetResources(nodeId, resources)
+	}
+	if err != nil {
+		s.logger.Error("Error updating snapshot %q", err)
 		return err
 	}
+
 	return nil
 }
 
-func (s *xdsServer) UpdateEnvoyResources(ctx context.Context, old, new Resources) error {
-	waitForDelete := false
-	var wg *completion.WaitGroup
-	var revertFuncs xds.AckingResourceMutatorRevertFuncList
-	// Wait only if new Listeners are added, as they will always be acked.
-	// (unreferenced routes or endpoints (and maybe clusters) are not ACKed or NACKed).
-	if len(new.Listeners) > 0 {
-		wg = completion.NewWaitGroup(ctx)
-	}
-	// Delete old listeners not added in 'new' or if old and new listener have different ports
-	var deleteListeners []*envoy_config_listener.Listener
-	for _, oldListener := range old.Listeners {
-		found := false
-		port := uint32(0)
-		if addr := oldListener.Address.GetSocketAddress(); addr != nil {
-			port = addr.GetPortValue()
-		}
-		for _, newListener := range new.Listeners {
-			if newListener.Name == oldListener.Name {
-				if addr := newListener.Address.GetSocketAddress(); addr != nil && addr.GetPortValue() != port {
-					s.logger.Debug("UpdateEnvoyResources: port changing",
-						logfields.Listener, newListener.Name,
-						logfields.ValueBefore, port,
-						logfields.ValueAfter, addr.GetPortValue(),
-					)
-					waitForDelete = true
-				} else {
-					// port is not changing, remove from new.PortAllocations to prevent acking an already acked port.
-					delete(new.PortAllocationCallbacks, newListener.Name)
-					found = true
-				}
-				break
-			}
-		}
-		if !found {
-			deleteListeners = append(deleteListeners, oldListener)
-		}
-	}
-	s.logger.Debug("UpdateEnvoyResources: listeners",
-		logfields.ResourcesDeleted, len(deleteListeners),
-		logfields.ResourcesUpserted, len(new.Listeners),
-	)
-	for _, listener := range deleteListeners {
-		listenerName := listener.Name
-		revertFuncs = append(revertFuncs, s.deleteListener(listener.Name, wg,
-			func(err error) {
-				if err == nil && old.PortAllocationCallbacks[listenerName] != nil {
-					if callbackErr := old.PortAllocationCallbacks[listenerName](ctx); callbackErr != nil {
-						s.logger.Warn("Failure in port allocation callback",
-							logfields.Error, callbackErr)
-					}
-				}
-			}))
-	}
-
-	// Do not wait for the deletion of routes, clusters, endpoints, or
-	// secrets as there are no quarantees that these deletions will be
-	// acked. For example, if the listener referring to was already deleted
-	// earlier, there are no references to the deleted resources any more,
-	// in which case we could wait forever for the ACKs. This could also
-	// happen if there is no listener referring to these other named
-	// resources to begin with.
-
-	// Delete old routes not added in 'new'
-	var deleteRoutes []*envoy_config_route.RouteConfiguration
-	for _, oldRoute := range old.Routes {
-		found := false
-		for _, newRoute := range new.Routes {
-			if newRoute.Name == oldRoute.Name {
-				found = true
-			}
-		}
-		if !found {
-			deleteRoutes = append(deleteRoutes, oldRoute)
-		}
-	}
-	s.logger.Debug("UpdateEnvoyResources: routes",
-		logfields.ResourcesDeleted, len(deleteRoutes),
-		logfields.ResourcesUpserted, len(new.Routes),
-	)
-	for _, route := range deleteRoutes {
-		revertFuncs = append(revertFuncs, s.deleteRoute(route.Name, nil))
-	}
-
-	// Delete old clusters not added in 'new'
-	var deleteClusters []*envoy_config_cluster.Cluster
-	for _, oldCluster := range old.Clusters {
-		found := false
-		for _, newCluster := range new.Clusters {
-			if newCluster.Name == oldCluster.Name {
-				found = true
-			}
-		}
-		if !found {
-			deleteClusters = append(deleteClusters, oldCluster)
-		}
-	}
-	s.logger.Debug("UpdateEnvoyResources: clusters",
-		logfields.ResourcesDeleted, len(deleteClusters),
-		logfields.ResourcesUpserted, len(new.Clusters),
-	)
-	for _, cluster := range deleteClusters {
-		revertFuncs = append(revertFuncs, s.deleteCluster(cluster.Name, nil))
-	}
-
-	// Delete old endpoints not added in 'new'
-	var deleteEndpoints []*envoy_config_endpoint.ClusterLoadAssignment
-	for _, oldEndpoint := range old.Endpoints {
-		found := false
-		for _, newEndpoint := range new.Endpoints {
-			if newEndpoint.ClusterName == oldEndpoint.ClusterName {
-				found = true
-			}
-		}
-		if !found {
-			deleteEndpoints = append(deleteEndpoints, oldEndpoint)
-		}
-	}
-	s.logger.Debug("UpdateEnvoyResources: endpoints",
-		logfields.ResourcesDeleted, len(deleteEndpoints),
-		logfields.ResourcesUpserted, len(new.Endpoints),
-	)
-	for _, endpoint := range deleteEndpoints {
-		revertFuncs = append(revertFuncs, s.deleteEndpoint(endpoint.ClusterName, nil))
-	}
-
-	// Delete old secrets not added in 'new'
-	var deleteSecrets []*envoy_config_tls.Secret
-	for _, oldSecret := range old.Secrets {
-		found := false
-		for _, newSecret := range new.Secrets {
-			if newSecret.Name == oldSecret.Name {
-				found = true
-			}
-		}
-		if !found {
-			deleteSecrets = append(deleteSecrets, oldSecret)
-		}
-	}
-	s.logger.Debug("UpdateEnvoyResources: secrets",
-		logfields.ResourcesDeleted, len(deleteSecrets),
-		logfields.ResourcesUpserted, len(new.Secrets),
-	)
-	for _, secret := range deleteSecrets {
-		revertFuncs = append(revertFuncs, s.deleteSecret(secret.Name, nil))
-	}
-
-	// Have to wait for deletes to complete before adding new listeners if a listener's port number is changed.
-	if wg != nil && waitForDelete {
-		start := time.Now()
-		s.logger.Debug("UpdateEnvoyResources: Waiting for proxy deletes to complete...")
-		err := wg.Wait()
-		if err != nil {
-			s.logger.Debug("UpdateEnvoyResources: delete failed",
-				logfields.Error, err,
-			)
-		}
-		s.logger.Debug("UpdateEnvoyResources: Finished waiting for proxy deletes",
-			logfields.Duration, time.Since(start),
-		)
-		// new wait group for adds
-		wg = completion.NewWaitGroup(ctx)
-	}
-
-	// Add new Secrets
-	for _, r := range new.Secrets {
-		revertFuncs = append(revertFuncs, s.upsertSecret(r.Name, r, nil))
-	}
-	// Add new Endpoints
-	for _, r := range new.Endpoints {
-		revertFuncs = append(revertFuncs, s.upsertEndpoint(r.ClusterName, r, nil))
-	}
-	// Add new Clusters
-	for _, r := range new.Clusters {
-		revertFuncs = append(revertFuncs, s.upsertCluster(r.Name, r, wg))
-	}
-	// Add new Routes
-	for _, r := range new.Routes {
-		revertFuncs = append(revertFuncs, s.upsertRoute(r.Name, r, nil))
-	}
-	if wg != nil && len(new.Clusters) > 0 {
-		start := time.Now()
-		s.logger.Debug("UpdateEnvoyResources: Waiting for cluster updates to complete...")
-		err := wg.Wait()
-		if err != nil {
-			s.logger.Debug("UpdateEnvoyResources: cluster update failed",
-				logfields.Error, err,
-			)
-		}
-		s.logger.Debug("UpdateEnvoyResources: Finished waiting for cluster updates",
-			logfields.Duration, time.Since(start),
-		)
-		// new wait group for adds
-		wg = completion.NewWaitGroup(ctx)
-	}
-	// Add new Listeners
-	for _, r := range new.Listeners {
-		listenerName := r.Name
-		revertFuncs = append(revertFuncs, s.upsertListener(r.Name, r, wg,
-			// this callback is not called if there is no change
-			func(err error) {
-				if err == nil && new.PortAllocationCallbacks[listenerName] != nil {
-					if callbackErr := new.PortAllocationCallbacks[listenerName](ctx); callbackErr != nil {
-						s.logger.Warn("Failure in port allocation callback",
-							logfields.Error, callbackErr,
-						)
-					}
-				}
-			}))
-	}
-
-	if wg != nil {
-		logArgs := []any{logfields.Duration, time.Since(time.Now())}
-		s.logger.Debug("UpdateEnvoyResources: Waiting for proxy updates to complete...")
-		err := wg.Wait()
-		if err != nil {
-			logArgs = append(logArgs, logfields.Error, err)
-		}
-		s.logger.Debug("UpdateEnvoyResources: Finished waiting for proxy updates", logArgs...)
-
-		// revert all changes in case of failure
-		if err != nil {
-			revertFuncs.Revert(nil)
-			s.logger.Debug("UpdateEnvoyResources: Finished reverting failed xDS transactions")
-		}
-		return err
-	}
-	return nil
+func (s *adsServer) UpsertEnvoyResources(ctx context.Context, resources xds.Resources) error {
+	return s.updateSnapshot(ctx, resources)
 }
 
-func (s *xdsServer) DeleteEnvoyResources(ctx context.Context, resources Resources) error {
+func (s *adsServer) UpdateEnvoyResources(ctx context.Context, oldResources, newResources xds.Resources) error {
+	return s.updateSnapshot(ctx, newResources)
+}
+
+func (s *adsServer) DeleteEnvoyResources(ctx context.Context, resources xds.Resources) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 	s.logger.Debug("DeleteEnvoyResources: Deleting Envoy resources",
 		logfields.ResourceListeners, len(resources.Listeners),
 		logfields.ResourceRoutes, len(resources.Routes),
@@ -2267,62 +1485,70 @@ func (s *xdsServer) DeleteEnvoyResources(ctx context.Context, resources Resource
 		logfields.ResourceEndpoints, len(resources.Endpoints),
 		logfields.ResourceSecrets, len(resources.Secrets),
 	)
-	var wg *completion.WaitGroup
-	var revertFuncs xds.AckingResourceMutatorRevertFuncList
-	// Wait only if new Listeners are added, as they will always be acked.
-	// (unreferenced routes or endpoints (and maybe clusters) are not ACKed or NACKed).
-	if len(resources.Listeners) > 0 {
-		wg = completion.NewWaitGroup(ctx)
-	}
-	for _, r := range resources.Listeners {
-		listenerName := r.Name
-		revertFuncs = append(revertFuncs, s.deleteListener(r.Name, wg,
-			func(err error) {
-				if err == nil && resources.PortAllocationCallbacks[listenerName] != nil {
-					if callbackErr := resources.PortAllocationCallbacks[listenerName](ctx); callbackErr != nil {
-						s.logger.Warn("Failure in port allocation callback",
-							logfields.Error, callbackErr,
-						)
-					}
-				}
-			}))
-	}
+	// Host proxy uses "127.0.0.1" as the nodeID
+	nodeId := "127.0.0.1"
 
-	// Do not wait for the deletion of routes, clusters, or endpoints, as
-	// there are no guarantees that these deletions will be acked. For
-	// example, if the listener referring to was already deleted earlier,
-	// there are no references to the deleted resources anymore, in which
-	// case we could wait forever for the ACKs. This could also happen if
-	// there is no listener referring to other named resources to
-	// begin with.
-	for _, r := range resources.Routes {
-		revertFuncs = append(revertFuncs, s.deleteRoute(r.Name, nil))
-	}
-	for _, r := range resources.Clusters {
-		revertFuncs = append(revertFuncs, s.deleteCluster(r.Name, nil))
-	}
-	for _, r := range resources.Endpoints {
-		revertFuncs = append(revertFuncs, s.deleteEndpoint(r.ClusterName, nil))
-	}
-	for _, r := range resources.Secrets {
-		revertFuncs = append(revertFuncs, s.deleteSecret(r.Name, nil))
-	}
+	oldSnapshot, err := s.cache.GetSnapshot(nodeId)
 
-	if wg != nil {
-		logArgs := []any{logfields.Duration, time.Since(time.Now())}
-		s.logger.Debug("DeleteEnvoyResources: Waiting for proxy updates to complete...")
-		err := wg.Wait()
-		if err != nil {
-			logArgs = append(logArgs, logfields.Error, err)
-		}
-		s.logger.Debug("DeleteEnvoyResources: Finished waiting for proxy updates", logArgs...)
+	currentResources := s.cache.GetAllResources(nodeId)
+	newResources := subtractResources(currentResources, resources)
 
-		// revert all changes in case of failure
-		if err != nil {
-			revertFuncs.Revert(nil)
-			s.logger.Debug("DeleteEnvoyResources: Finished reverting failed xDS transactions")
-		}
+	newSnapshot, err := s.cache.GenerateSnapshot(newResources, s.logger)
+	if err != nil {
 		return err
 	}
-	return nil
+
+	if s.cache.AreDifferentSnapshots(oldSnapshot, newSnapshot) {
+		err = s.cache.SetSnapshot(ctx, nodeId, newSnapshot)
+		if err != nil {
+			s.logger.Error("Error setting snapshot %v: %q", newSnapshot, err)
+			return err
+		}
+	} else {
+		s.logger.Debug("DeleteEnvoyResources: Snapshots are identical, skipping deleting resources")
+	}
+
+	err = s.cache.SetSnapshot(context.Background(), nodeId, newSnapshot)
+	if err != nil {
+		s.cache.SetResources(nodeId, newResources)
+	}
+	return err
+}
+
+// Subtracts all resources present in b from a.
+func subtractResources(a xds.Resources, b xds.Resources) xds.Resources {
+	diffResources := xds.Resources{}
+
+	for endpointName := range a.Endpoints {
+		if endpoint, present := b.Endpoints[endpointName]; !present {
+			diffResources.Endpoints[endpointName] = endpoint
+		}
+	}
+
+	for clusterName := range a.Clusters {
+		if cluster, present := b.Clusters[clusterName]; !present {
+			diffResources.Clusters[clusterName] = cluster
+		}
+	}
+
+	for routeName := range a.Routes {
+		if route, present := b.Routes[routeName]; !present {
+			diffResources.Routes[routeName] = route
+		}
+	}
+
+	for listenerName := range a.Listeners {
+		if listener, present := b.Listeners[listenerName]; !present {
+			diffResources.Listeners[listenerName] = listener
+		}
+	}
+
+	for secretName := range a.Secrets {
+		if secret, present := b.Secrets[secretName]; !present {
+			diffResources.Secrets[secretName] = secret
+		}
+	}
+
+	// todo(nezdolik) implement difference for extension configs
+	return diffResources
 }

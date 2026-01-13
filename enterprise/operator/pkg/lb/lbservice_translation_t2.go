@@ -68,6 +68,7 @@ import (
 
 	"github.com/cilium/cilium/pkg/annotation"
 	"github.com/cilium/cilium/pkg/envoy"
+	util "github.com/cilium/cilium/pkg/envoy/util"
 	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
 	slim_metav1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/apis/meta/v1"
 	"github.com/cilium/cilium/pkg/logging/logfields"
@@ -1964,7 +1965,7 @@ func (r *lbServiceT2Translator) toClusterHealthChecks(healthCheckConfig lbBacken
 			{
 				Name: "cilium.health_check.event_sink.pipe",
 				TypedConfig: toAny(&cilium_proxy_api.HealthCheckEventPipeSink{
-					Path: envoy.GetSocketDir(r.config.T1T2HealthCheck.T2EnvoyHCEventLoggingStateDir) + "/healthcheck_sink.sock",
+					Path: util.GetSocketDir(r.config.T1T2HealthCheck.T2EnvoyHCEventLoggingStateDir) + "/healthcheck_sink.sock",
 				}),
 			},
 		}

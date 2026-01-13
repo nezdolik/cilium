@@ -25,6 +25,8 @@ import (
 	envoy_extensions_bootstrap_internal_listener_v3 "github.com/envoyproxy/go-control-plane/envoy/extensions/bootstrap/internal_listener/v3"
 	envoy_extensions_resource_monitors_downstream_connections "github.com/envoyproxy/go-control-plane/envoy/extensions/resource_monitors/downstream_connections/v3"
 	envoy_config_upstream "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
+
+	util "github.com/cilium/cilium/pkg/envoy/util"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -120,7 +122,7 @@ func (o *onDemandXdsStarter) startEmbeddedEnvoyInternal(config embeddedEnvoyConf
 	envoy := &EmbeddedEnvoy{
 		stopCh: make(chan struct{}),
 		errCh:  make(chan error, 1),
-		admin:  NewEnvoyAdminClientForSocket(o.logger, GetSocketDir(config.runDir), config.defaultLogLevel),
+		admin:  NewEnvoyAdminClientForSocket(o.logger, util.GetSocketDir(config.runDir), config.defaultLogLevel),
 	}
 
 	bootstrapDir := filepath.Join(config.runDir, "envoy")
@@ -129,7 +131,7 @@ func (o *onDemandXdsStarter) startEmbeddedEnvoyInternal(config embeddedEnvoyConf
 	os.Mkdir(bootstrapDir, 0777)
 
 	// Make sure sockets dir exists
-	os.Mkdir(GetSocketDir(config.runDir), 0777)
+	os.Mkdir(util.GetSocketDir(config.runDir), 0777)
 
 	bootstrapFilePath := filepath.Join(bootstrapDir, "bootstrap.pb")
 
@@ -137,8 +139,8 @@ func (o *onDemandXdsStarter) startEmbeddedEnvoyInternal(config embeddedEnvoyConf
 		filePath:                 bootstrapFilePath,
 		nodeId:                   "host~127.0.0.1~no-id~localdomain", // node id format inherited from Istio
 		cluster:                  ingressClusterName,
-		adminPath:                getAdminSocketPath(GetSocketDir(config.runDir)),
-		xdsSock:                  getXDSSocketPath(GetSocketDir(config.runDir)),
+		adminPath:                util.GetAdminSocketPath(util.GetSocketDir(config.runDir)),
+		xdsSock:                  util.GetXDSSocketPath(util.GetSocketDir(config.runDir)),
 		egressClusterName:        egressClusterName,
 		ingressClusterName:       ingressClusterName,
 		connectTimeout:           config.connectTimeout,

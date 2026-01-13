@@ -16,13 +16,12 @@ import (
 	cilium "github.com/cilium/proxy/go/cilium/api"
 
 	"github.com/cilium/cilium/pkg/completion"
-	"github.com/cilium/cilium/pkg/envoy"
 	"github.com/cilium/cilium/pkg/envoy/xds"
 	"github.com/cilium/cilium/pkg/policy"
 	"github.com/cilium/cilium/pkg/proxy/endpoint"
 )
 
-var _ envoy.XDSServer = &mockXDSServer{}
+var _ xds.XDSServer = &mockXDSServer{}
 
 type mockXDSServer struct {
 	nrOfDeletions int
@@ -44,17 +43,17 @@ func (r *mockXDSServer) Reset() {
 	r.nrOfDeletions = 0
 }
 
-func (r *mockXDSServer) UpdateEnvoyResources(ctx context.Context, old envoy.Resources, new envoy.Resources) error {
+func (r *mockXDSServer) UpdateEnvoyResources(ctx context.Context, old xds.Resources, new xds.Resources) error {
 	r.nrOfUpdates++
 	return nil
 }
 
-func (r *mockXDSServer) DeleteEnvoyResources(ctx context.Context, resources envoy.Resources) error {
+func (r *mockXDSServer) DeleteEnvoyResources(ctx context.Context, resources xds.Resources) error {
 	r.nrOfDeletions++
 	return nil
 }
 
-func (r *mockXDSServer) UpsertEnvoyResources(ctx context.Context, resources envoy.Resources) error {
+func (r *mockXDSServer) UpsertEnvoyResources(ctx context.Context, resources xds.Resources) error {
 	r.nrOfUpserts++
 	return nil
 }
