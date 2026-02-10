@@ -724,7 +724,7 @@ func Test_getWildcardNetworkPolicyRules(t *testing.T) {
 			wildcardCachedSelector:    nil,
 		}
 
-		obtained, isPass, wildcardSelectorPrecedence := xds.getWildcardPortNetworkPolicyRules(ep, version, policyTypes.HighestPriority, policyTypes.LowestPriority, perSelectorPoliciesWithWildcard, false, false, "")
+		obtained, isPass, wildcardSelectorPrecedence := GetWildcardPortNetworkPolicyRules(ep, version, policyTypes.HighestPriority, policyTypes.LowestPriority, perSelectorPoliciesWithWildcard, false, false, "", xds.logger, xds.l7RulesTranslator)
 		require.Equal(t, []*cilium.PortNetworkPolicyRule{{
 			Precedence: uint32(policyTypes.MaxAllowPrecedence),
 		}}, obtained)
@@ -741,7 +741,7 @@ func Test_getWildcardNetworkPolicyRules(t *testing.T) {
 			cachedRequiresV2Selector1: nil,
 		}
 
-		obtained, isPass, wildcardSelectorPrecedence := xds.getWildcardPortNetworkPolicyRules(ep, version, policyTypes.HighestPriority, policyTypes.LowestPriority, perSelectorPolicies, false, false, "")
+		obtained, isPass, wildcardSelectorPrecedence := GetWildcardPortNetworkPolicyRules(ep, version, policyTypes.HighestPriority, policyTypes.LowestPriority, perSelectorPolicies, false, false, "", xds.logger, xds.l7RulesTranslator)
 		require.Equal(t, []*cilium.PortNetworkPolicyRule{{
 			Precedence:     uint32(policyTypes.MaxDenyPrecedence),
 			Verdict:        DenyVerdict,
@@ -761,9 +761,9 @@ func Test_getWildcardNetworkPolicyRules(t *testing.T) {
 			Verdict:  types.Pass,
 		}
 
-		obtained, isPass, wildcardSelectorPrecedence := xds.getWildcardPortNetworkPolicyRules(ep, version, policyTypes.HighestPriority, policyTypes.LowestPriority, policy.L7DataMap{
+		obtained, isPass, wildcardSelectorPrecedence := GetWildcardPortNetworkPolicyRules(ep, version, policyTypes.HighestPriority, policyTypes.LowestPriority, policy.L7DataMap{
 			wildcardCachedSelector: passPolicy,
-		}, false, false, "")
+		}, false, false, "", xds.logger, xds.l7RulesTranslator)
 
 		require.Equal(t, []*cilium.PortNetworkPolicyRule{{
 			Precedence: uint32(passPriority.ToPassPrecedence()),
@@ -781,7 +781,7 @@ func Test_getWildcardNetworkPolicyRules(t *testing.T) {
 		allowPriority := passPriority
 		denyPriority := passPriority
 
-		obtained, isPass, wildcardSelectorPrecedence := xds.getWildcardPortNetworkPolicyRules(ep, version, policyTypes.HighestPriority, policyTypes.LowestPriority, policy.L7DataMap{
+		obtained, isPass, wildcardSelectorPrecedence := GetWildcardPortNetworkPolicyRules(ep, version, policyTypes.HighestPriority, policyTypes.LowestPriority, policy.L7DataMap{
 			wildcardCachedSelector: {
 				Priority: passPriority,
 				Verdict:  types.Pass,
@@ -793,7 +793,7 @@ func Test_getWildcardNetworkPolicyRules(t *testing.T) {
 				Priority: denyPriority,
 				Verdict:  types.Deny,
 			},
-		}, false, false, "")
+		}, false, false, "", xds.logger, xds.l7RulesTranslator)
 
 		require.True(t, isPass)
 		require.Equal(t, passPriority.ToPassPrecedence(), wildcardSelectorPrecedence)
@@ -818,7 +818,7 @@ func Test_getWildcardNetworkPolicyRules(t *testing.T) {
 	t.Run("grouped_non_wildcard_pass_with_empty_selection_is_skipped", func(t *testing.T) {
 		noneCachedSelector, _ := testSelectorCache.AddIdentitySelectorForTest(dummySelectorCacheUser, api.EndpointSelectorNone)
 
-		obtained, isPass, wildcardSelectorPrecedence := xds.getWildcardPortNetworkPolicyRules(ep, version, policyTypes.HighestPriority, policyTypes.LowestPriority, policy.L7DataMap{
+		obtained, isPass, wildcardSelectorPrecedence := GetWildcardPortNetworkPolicyRules(ep, version, policyTypes.HighestPriority, policyTypes.LowestPriority, policy.L7DataMap{
 			cachedSelector1: {
 				Priority: policyTypes.Priority(3),
 			},
@@ -826,7 +826,7 @@ func Test_getWildcardNetworkPolicyRules(t *testing.T) {
 				Priority: policyTypes.Priority(2),
 				Verdict:  types.Pass,
 			},
-		}, false, false, "")
+		}, false, false, "", xds.logger, xds.l7RulesTranslator)
 
 		require.Equal(t, []*cilium.PortNetworkPolicyRule{{
 			Precedence:     uint32(policyTypes.Priority(3).ToAllowPrecedence()),
@@ -842,45 +842,45 @@ func TestGetPortNetworkPolicyRule(t *testing.T) {
 
 	version := testSelectorCache.GetSelectorSnapshot()
 
-	obtained, canShortCircuit := xds.getPortNetworkPolicyRule(ep, version, cachedSelector1, L7Rules12, policyTypes.LowestPriority, policyTypes.LowestPriority, false, false, "")
+	obtained, canShortCircuit := GetPortNetworkPolicyRule(ep, version, cachedSelector1, L7Rules12, policyTypes.LowestPriority, policyTypes.LowestPriority, false, false, "", xds.l7RulesTranslator, xds.logger)
 	require.Equal(t, ExpectedPortNetworkPolicyRule12, obtained)
 	require.True(t, canShortCircuit)
 
-	obtained, canShortCircuit = xds.getPortNetworkPolicyRule(ep, version, cachedSelector1, L7Rules12Deny, policyTypes.LowestPriority, policyTypes.LowestPriority, false, false, "")
+	obtained, canShortCircuit = GetPortNetworkPolicyRule(ep, version, cachedSelector1, L7Rules12Deny, policyTypes.LowestPriority, policyTypes.LowestPriority, false, false, "", xds.l7RulesTranslator, xds.logger)
 	require.Equal(t, ExpectedPortNetworkPolicyRule12Deny, obtained)
 	require.False(t, canShortCircuit)
 
-	obtained, canShortCircuit = xds.getPortNetworkPolicyRule(ep, version, cachedSelector1, L7Rules12HeaderMatch, policyTypes.LowestPriority, policyTypes.LowestPriority, false, false, "")
+	obtained, canShortCircuit = GetPortNetworkPolicyRule(ep, version, cachedSelector1, L7Rules12HeaderMatch, policyTypes.LowestPriority, policyTypes.LowestPriority, false, false, "", xds.l7RulesTranslator, xds.logger)
 	require.Equal(t, ExpectedPortNetworkPolicyRule122HeaderMatch, obtained)
 	require.False(t, canShortCircuit)
 
-	obtained, canShortCircuit = xds.getPortNetworkPolicyRule(ep, version, cachedSelector2, L7Rules1, policyTypes.LowestPriority, policyTypes.LowestPriority, false, false, "")
+	obtained, canShortCircuit = GetPortNetworkPolicyRule(ep, version, cachedSelector2, L7Rules1, policyTypes.LowestPriority, policyTypes.LowestPriority, false, false, "", xds.l7RulesTranslator, xds.logger)
 	require.Equal(t, ExpectedPortNetworkPolicyRule1, obtained)
 	require.True(t, canShortCircuit)
 
 	// With precedence
 
-	obtained, canShortCircuit = xds.getPortNetworkPolicyRule(ep, version, cachedSelector1, L7Rules12, policyTypes.HighestPriority, policyTypes.LowestPriority, false, false, "")
+	obtained, canShortCircuit = GetPortNetworkPolicyRule(ep, version, cachedSelector1, L7Rules12, policyTypes.HighestPriority, policyTypes.LowestPriority, false, false, "", xds.l7RulesTranslator, xds.logger)
 	require.Equal(t, ExpectedPortNetworkPolicyRule12Precedence, obtained)
 	require.True(t, canShortCircuit)
 
-	obtained, canShortCircuit = xds.getPortNetworkPolicyRule(ep, version, cachedSelector1, L7Rules12Deny, policyTypes.HighestPriority, policyTypes.LowestPriority, false, false, "")
+	obtained, canShortCircuit = GetPortNetworkPolicyRule(ep, version, cachedSelector1, L7Rules12Deny, policyTypes.HighestPriority, policyTypes.LowestPriority, false, false, "", xds.l7RulesTranslator, xds.logger)
 	require.Equal(t, ExpectedPortNetworkPolicyRule12DenyPrecedence, obtained)
 	require.False(t, canShortCircuit)
 
-	obtained, canShortCircuit = xds.getPortNetworkPolicyRule(ep, version, cachedSelector1, L7Rules12HeaderMatch, policyTypes.HighestPriority, policyTypes.LowestPriority, false, false, "")
+	obtained, canShortCircuit = GetPortNetworkPolicyRule(ep, version, cachedSelector1, L7Rules12HeaderMatch, policyTypes.HighestPriority, policyTypes.LowestPriority, false, false, "", xds.l7RulesTranslator, xds.logger)
 	require.Equal(t, ExpectedPortNetworkPolicyRule122HeaderMatchPrecedence, obtained)
 	require.False(t, canShortCircuit)
 
-	obtained, canShortCircuit = xds.getPortNetworkPolicyRule(ep, version, cachedSelector2, L7Rules1, policyTypes.HighestPriority, policyTypes.LowestPriority, false, false, "")
+	obtained, canShortCircuit = GetPortNetworkPolicyRule(ep, version, cachedSelector2, L7Rules1, policyTypes.HighestPriority, policyTypes.LowestPriority, false, false, "", xds.l7RulesTranslator, xds.logger)
 	require.Equal(t, ExpectedPortNetworkPolicyRule1Precedence, obtained)
 	require.True(t, canShortCircuit)
 
 	// with pass verdict
 
-	obtained, canShortCircuit = xds.getPortNetworkPolicyRule(ep, version, cachedSelector1,
+	obtained, canShortCircuit = GetPortNetworkPolicyRule(ep, version, cachedSelector1,
 		&policy.PerSelectorPolicy{Verdict: types.Pass, Priority: 0xffff},
-		0xffff, 0x1ffff, false, false, "")
+		0xffff, 0x1ffff, false, false, "", xds.l7RulesTranslator, xds.logger)
 	require.Equal(t, &cilium.PortNetworkPolicyRule{
 		Precedence:     0xff000000,
 		Verdict:        &cilium.PortNetworkPolicyRule_PassPrecedence{PassPrecedence: 0xfe000000},
@@ -893,35 +893,35 @@ func TestGetDirectionNetworkPolicy(t *testing.T) {
 	// L4+L7
 	xds := testXdsServer(t)
 	selectors := testSelectorCache.GetSelectorSnapshot()
-	obtained := xds.getDirectionNetworkPolicy(ep, selectors, &L4Policy1.Ingress, true, false, false, "ingress", "")
+	obtained := GetDirectionNetworkPolicy(ep, selectors, &L4Policy1.Ingress, true, false, false, "ingress", "", xds.logger, xds.l7RulesTranslator)
 	require.Equal(t, ExpectedPerPortPolicies12, obtained)
 
 	// L4+L7 with header mods
-	obtained = xds.getDirectionNetworkPolicy(ep, selectors, &L4HeaderMatchPolicy1.Ingress, true, false, false, "ingress", "")
+	obtained = GetDirectionNetworkPolicy(ep, selectors, &L4HeaderMatchPolicy1.Ingress, true, false, false, "ingress", "", xds.logger, xds.l7RulesTranslator)
 	require.Equal(t, ExpectedPerPortPolicies122HeaderMatch, obtained)
 
 	// L4+L7
-	obtained = xds.getDirectionNetworkPolicy(ep, selectors, &L4Policy1.Egress, true, false, false, "egress", "")
+	obtained = GetDirectionNetworkPolicy(ep, selectors, &L4Policy1.Egress, true, false, false, "egress", "", xds.logger, xds.l7RulesTranslator)
 	require.Equal(t, ExpectedPerPortPolicies1, obtained)
 
 	// L4+L7 with Deny L3
-	obtained = xds.getDirectionNetworkPolicy(ep, selectors, &L4Deny2Policy1.Ingress, true, false, false, "ingress", "")
+	obtained = GetDirectionNetworkPolicy(ep, selectors, &L4Deny2Policy1.Ingress, true, false, false, "ingress", "", xds.logger, xds.l7RulesTranslator)
 	require.Equal(t, ExpectedPerPortPolicies1Deny2, obtained)
 
 	// L4-only
-	obtained = xds.getDirectionNetworkPolicy(ep, selectors, &L4Policy4.Ingress, true, false, false, "ingress", "")
+	obtained = GetDirectionNetworkPolicy(ep, selectors, &L4Policy4.Ingress, true, false, false, "ingress", "", xds.logger, xds.l7RulesTranslator)
 	require.Equal(t, ExpectedPerPortPolicies, obtained)
 
 	// L4-only
-	obtained = xds.getDirectionNetworkPolicy(ep, selectors, &L4Policy5.Ingress, true, false, false, "ingress", "")
+	obtained = GetDirectionNetworkPolicy(ep, selectors, &L4Policy5.Ingress, true, false, false, "ingress", "", xds.logger, xds.l7RulesTranslator)
 	require.Equal(t, ExpectedPerPortPoliciesWildcard, obtained)
 
 	// L4-only with SNI
-	obtained = xds.getDirectionNetworkPolicy(ep, selectors, &L4SNIPolicy.Ingress, true, false, false, "ingress", "")
+	obtained = GetDirectionNetworkPolicy(ep, selectors, &L4SNIPolicy.Ingress, true, false, false, "ingress", "", xds.logger, xds.l7RulesTranslator)
 	require.Equal(t, ExpectedPerPortPoliciesSNI, obtained)
 
 	// with pass verdict
-	obtained = xds.getDirectionNetworkPolicy(ep, selectors, &L4PassPolicy.Ingress, true, false, false, "ingress", "")
+	obtained = GetDirectionNetworkPolicy(ep, selectors, &L4PassPolicy.Ingress, true, false, false, "ingress", "", xds.logger, xds.l7RulesTranslator)
 	require.Equal(t, ExpectedPerPortPoliciesPass, obtained)
 
 }
@@ -956,7 +956,7 @@ func TestGetDirectionNetworkPolicyWildcardPass(t *testing.T) {
 			},
 		}), []types.Priority{0, 0x100})
 
-		obtained := xds.getDirectionNetworkPolicy(ep, selectors, l4DirectionPolicy, true, false, false, "ingress", "")
+		obtained := GetDirectionNetworkPolicy(ep, selectors, l4DirectionPolicy, true, false, false, "ingress", "", xds.logger, xds.l7RulesTranslator)
 		require.Equal(t, []*cilium.PortNetworkPolicy{{
 			Port:     0,
 			Protocol: envoy_config_core.SocketAddress_TCP,
@@ -1005,7 +1005,7 @@ func TestGetDirectionNetworkPolicyWildcardPass(t *testing.T) {
 			},
 		}), []types.Priority{0})
 
-		obtained := xds.getDirectionNetworkPolicy(ep, selectors, l4DirectionPolicy, true, false, false, "ingress", "")
+		obtained := GetDirectionNetworkPolicy(ep, selectors, l4DirectionPolicy, true, false, false, "ingress", "", xds.logger, xds.l7RulesTranslator)
 		require.Equal(t, []*cilium.PortNetworkPolicy{{
 			Port:     0,
 			Protocol: envoy_config_core.SocketAddress_TCP,
@@ -1058,7 +1058,7 @@ func TestGetDirectionNetworkPolicyWildcardPass(t *testing.T) {
 			},
 		}), []types.Priority{0})
 
-		obtained := xds.getDirectionNetworkPolicy(ep, selectors, l4DirectionPolicy, true, false, false, "ingress", "")
+		obtained := GetDirectionNetworkPolicy(ep, selectors, l4DirectionPolicy, true, false, false, "ingress", "", xds.logger, xds.l7RulesTranslator)
 		require.Equal(t, []*cilium.PortNetworkPolicy{{
 			Port:     0,
 			Protocol: envoy_config_core.SocketAddress_TCP,
@@ -1192,7 +1192,7 @@ func TestGetDirectionNetworkPolicyWildcardRedirect(t *testing.T) {
 				}),
 			}
 
-			obtained := xds.getDirectionNetworkPolicy(redirectEP, selectors, l4DirectionPolicy, true, false, false, "ingress", "")
+			obtained := GetDirectionNetworkPolicy(redirectEP, selectors, l4DirectionPolicy, true, false, false, "ingress", "", xds.logger, xds.l7RulesTranslator)
 			require.Equal(t, tc.expected, obtained)
 		})
 	}
@@ -1266,7 +1266,7 @@ func TestCNPWildcardPortListenerRedirectToEnvoy(t *testing.T) {
 		epp.Detach(logger)
 	})
 
-	obtained := xds.getDirectionNetworkPolicy(
+	obtained := GetDirectionNetworkPolicy(
 		redirectEP,
 		epp.GetPolicySelectors(),
 		&epp.SelectorPolicy.L4Policy.Egress,
@@ -1275,6 +1275,8 @@ func TestCNPWildcardPortListenerRedirectToEnvoy(t *testing.T) {
 		false,
 		"egress",
 		"",
+		xds.logger,
+		xds.l7RulesTranslator,
 	)
 
 	require.Equal(t, []*cilium.PortNetworkPolicy{{
@@ -1290,7 +1292,7 @@ func TestCNPWildcardPortListenerRedirectToEnvoy(t *testing.T) {
 func TestGetNetworkPolicy(t *testing.T) {
 	xds := testXdsServer(t)
 	selectors := testSelectorCache.GetSelectorSnapshot()
-	obtained := xds.getNetworkPolicy(ep, selectors, []string{IPv4Addr}, L4Policy1, true, true, false, false, "")
+	obtained := GetNetworkPolicy(ep, selectors, []string{IPv4Addr}, L4Policy1, true, true, false, false, "", xds.logger, xds.l7RulesTranslator)
 	expected := &cilium.NetworkPolicy{
 		EndpointIps:            []string{IPv4Addr},
 		EndpointId:             uint64(ep.GetID()),
@@ -1303,7 +1305,7 @@ func TestGetNetworkPolicy(t *testing.T) {
 func TestGetNetworkPolicyWildcard(t *testing.T) {
 	xds := testXdsServer(t)
 	selectors := testSelectorCache.GetSelectorSnapshot()
-	obtained := xds.getNetworkPolicy(ep, selectors, []string{IPv4Addr}, L4Policy2, true, true, false, false, "")
+	obtained := GetNetworkPolicy(ep, selectors, []string{IPv4Addr}, L4Policy2, true, true, false, false, "", xds.logger, xds.l7RulesTranslator)
 	expected := &cilium.NetworkPolicy{
 		EndpointIps:            []string{IPv4Addr},
 		EndpointId:             uint64(ep.GetID()),
@@ -1316,7 +1318,7 @@ func TestGetNetworkPolicyWildcard(t *testing.T) {
 func TestGetNetworkPolicyDeny(t *testing.T) {
 	xds := testXdsServer(t)
 	selectors := testSelectorCache.GetSelectorSnapshot()
-	obtained := xds.getNetworkPolicy(ep, selectors, []string{IPv4Addr}, L4Policy1RequiresV2, true, true, false, false, "")
+	obtained := GetNetworkPolicy(ep, selectors, []string{IPv4Addr}, L4Policy1RequiresV2, true, true, false, false, "", xds.logger, xds.l7RulesTranslator)
 	expected := &cilium.NetworkPolicy{
 		EndpointIps:            []string{IPv4Addr},
 		EndpointId:             uint64(ep.GetID()),
@@ -1329,7 +1331,7 @@ func TestGetNetworkPolicyDeny(t *testing.T) {
 func TestGetNetworkPolicyWildcardDeny(t *testing.T) {
 	xds := testXdsServer(t)
 	selectors := testSelectorCache.GetSelectorSnapshot()
-	obtained := xds.getNetworkPolicy(ep, selectors, []string{IPv4Addr}, L4Policy1RequiresV2, true, true, false, false, "")
+	obtained := GetNetworkPolicy(ep, selectors, []string{IPv4Addr}, L4Policy1RequiresV2, true, true, false, false, "", xds.logger, xds.l7RulesTranslator)
 	expected := &cilium.NetworkPolicy{
 		EndpointIps:            []string{IPv4Addr},
 		EndpointId:             uint64(ep.GetID()),
@@ -1342,7 +1344,7 @@ func TestGetNetworkPolicyWildcardDeny(t *testing.T) {
 func TestGetNetworkPolicyNil(t *testing.T) {
 	xds := testXdsServer(t)
 	selectors := testSelectorCache.GetSelectorSnapshot()
-	obtained := xds.getNetworkPolicy(ep, selectors, []string{IPv4Addr}, nil, true, true, false, false, "")
+	obtained := GetNetworkPolicy(ep, selectors, []string{IPv4Addr}, nil, true, true, false, false, "", xds.logger, xds.l7RulesTranslator)
 	expected := &cilium.NetworkPolicy{
 		EndpointIps:            []string{IPv4Addr},
 		EndpointId:             uint64(ep.GetID()),
@@ -1355,7 +1357,7 @@ func TestGetNetworkPolicyNil(t *testing.T) {
 func TestGetNetworkPolicyIngressNotEnforced(t *testing.T) {
 	xds := testXdsServer(t)
 	selectors := testSelectorCache.GetSelectorSnapshot()
-	obtained := xds.getNetworkPolicy(ep, selectors, []string{IPv4Addr}, L4Policy2, false, true, false, false, "")
+	obtained := GetNetworkPolicy(ep, selectors, []string{IPv4Addr}, L4Policy2, false, true, false, false, "", xds.logger, xds.l7RulesTranslator)
 	expected := &cilium.NetworkPolicy{
 		EndpointIps:            []string{IPv4Addr},
 		EndpointId:             uint64(ep.GetID()),
@@ -1368,7 +1370,7 @@ func TestGetNetworkPolicyIngressNotEnforced(t *testing.T) {
 func TestGetNetworkPolicyEgressNotEnforced(t *testing.T) {
 	xds := testXdsServer(t)
 	selectors := testSelectorCache.GetSelectorSnapshot()
-	obtained := xds.getNetworkPolicy(ep, selectors, []string{IPv4Addr}, L4Policy1RequiresV2, true, false, false, false, "")
+	obtained := GetNetworkPolicy(ep, selectors, []string{IPv4Addr}, L4Policy1RequiresV2, true, false, false, false, "", xds.logger, xds.l7RulesTranslator)
 	expected := &cilium.NetworkPolicy{
 		EndpointIps:            []string{IPv4Addr},
 		EndpointId:             uint64(ep.GetID()),
@@ -2060,7 +2062,7 @@ func TestGetNetworkPolicyTLSInterception(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			xds := testXdsServer(t)
 			selectors := testSelectorCache.GetSelectorSnapshot()
-			obtained := xds.getNetworkPolicy(ep, selectors, []string{IPv4Addr}, tt.args.inputPolicy, true, true, tt.args.useFullTLSContext, tt.args.useSDS, tt.args.policySecretsNamespace)
+			obtained := GetNetworkPolicy(ep, selectors, []string{IPv4Addr}, tt.args.inputPolicy, true, true, tt.args.useFullTLSContext, tt.args.useSDS, tt.args.policySecretsNamespace, xds.logger, xds.l7RulesTranslator)
 			expected := &cilium.NetworkPolicy{
 				EndpointIps:            []string{IPv4Addr},
 				EndpointId:             uint64(ep.GetID()),
@@ -2072,7 +2074,7 @@ func TestGetNetworkPolicyTLSInterception(t *testing.T) {
 	}
 }
 
-func Test_getPublicListenerAddress(t *testing.T) {
+func Test_GetPublicListenerAddress(t *testing.T) {
 	type args struct {
 		port uint16
 		ipv4 bool
@@ -2138,13 +2140,13 @@ func Test_getPublicListenerAddress(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := getPublicListenerAddress(tt.args.port, tt.args.ipv4, tt.args.ipv6)
+			got := GetPublicListenerAddress(tt.args.port, tt.args.ipv4, tt.args.ipv6)
 			assert.Equal(t, tt.want, got)
 		})
 	}
 }
 
-func Test_getLocalListenerAddresses(t *testing.T) {
+func Test_GetLocalListenerAddresses(t *testing.T) {
 	v4Local := &envoy_config_core.Address_SocketAddress{
 		SocketAddress: &envoy_config_core.SocketAddress{
 			Protocol:      envoy_config_core.SocketAddress_TCP,
@@ -2247,7 +2249,7 @@ func TestUpdateNetworkPolicyRevertKeepsLocalEndpointStoreAfterStaleDuplicateRemo
 	repo, localIdentity, currentEPP := newTestEndpointPolicy(t, currentEP)
 	xds := newTestXDSServer(t)
 
-	err, revert := xds.UpdateNetworkPolicy(currentEP, currentEPP, nil)
+	err, revert := xds.UpdateNetworkPolicy(t.Context(), currentEP, currentEPP, nil)
 	require.NoError(t, err)
 	require.NotNil(t, revert)
 
@@ -2266,7 +2268,7 @@ func TestUpdateNetworkPolicyRevertKeepsLocalEndpointStoreAfterStaleDuplicateRemo
 	require.Equal(t, staleEP.GetID(), localEP.GetID())
 
 	refreshedCurrentEPP := distillEndpointPolicy(t, repo, localIdentity, currentEP)
-	err, revert = xds.UpdateNetworkPolicy(currentEP, refreshedCurrentEPP, nil)
+	err, revert = xds.UpdateNetworkPolicy(t.Context(), currentEP, refreshedCurrentEPP, nil)
 	require.NoError(t, err)
 	require.NotNil(t, revert)
 
