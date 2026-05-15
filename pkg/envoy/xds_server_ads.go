@@ -62,12 +62,6 @@ var CiliumAdsConfigSource = &envoy_config_core.ApiConfigSource{
 	},
 }
 
-var CiliumXdsWithAdsConfigSource = &envoy_config_core.ConfigSource{
-	ConfigSourceSpecifier: &envoy_config_core.ConfigSource_Ads{Ads: &envoy_config_core.AggregatedConfigSource{}},
-	InitialFetchTimeout:   durationpb.New(0),
-	ResourceApiVersion:    envoy_config_core.ApiVersion_V3,
-}
-
 type adsServer struct {
 	logger *slog.Logger
 

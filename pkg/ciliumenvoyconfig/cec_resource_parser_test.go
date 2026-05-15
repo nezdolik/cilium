@@ -1920,3 +1920,39 @@ func Test_isL7LB(t *testing.T) {
 		})
 	}
 }
+
+func TestGetBPFMetadataListenerFilterADSMode(t *testing.T) {
+	parser := CECResourceParser{
+		logger:           hivetest.Logger(t),
+		portAllocator:    NewMockPortAllocator(),
+		httpLingerConfig: -1,
+	}
+
+	t.Run("ADS disabled: UseNphds not set", func(t *testing.T) {
+		option.Config.EnableEnvoyADSServer = false
+		lf := parser.getBPFMetadataListenerFilter(true, false, 1234, false)
+		require.NotNil(t, lf)
+		msg, err := lf.GetTypedConfig().UnmarshalNew()
+		require.NoError(t, err)
+		meta, ok := msg.(*cilium.BpfMetadata)
+		require.True(t, ok)
+		assert.False(t, meta.UseNphds)
+		assert.Nil(t, meta.NpdsConfig)
+	})
+
+	t.Run("ADS enabled: UseNphds and NpdsConfig set to ADS", func(t *testing.T) {
+		option.Config.EnableEnvoyADSServer = true
+		defer func() { option.Config.EnableEnvoyADSServer = false }()
+
+		lf := parser.getBPFMetadataListenerFilter(true, false, 1234, false)
+		require.NotNil(t, lf)
+		msg, err := lf.GetTypedConfig().UnmarshalNew()
+		require.NoError(t, err)
+		meta, ok := msg.(*cilium.BpfMetadata)
+		require.True(t, ok)
+		assert.True(t, meta.UseNphds)
+		require.NotNil(t, meta.NpdsConfig)
+		assert.NotNil(t, meta.NpdsConfig.GetAds(), "NpdsConfig should use ADS aggregated source")
+		assert.Equal(t, envoy_config_core.ApiVersion_V3, meta.NpdsConfig.ResourceApiVersion)
+	})
+}

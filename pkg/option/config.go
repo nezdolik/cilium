@@ -122,6 +122,10 @@ const (
 	// EnableL7Proxy is the name of the option to enable L7 proxy
 	EnableL7Proxy = "enable-l7-proxy"
 
+	// EnableEnvoyADSServer enables the ADS (Aggregated Discovery Service) xDS server
+	// instead of the default per-resource-type xDS server for Envoy proxy configuration.
+	EnableEnvoyADSServer = "enable-envoy-ads-server"
+
 	// EnableTracing enables tracing mode in the agent.
 	EnableTracing = "enable-tracing"
 
@@ -1400,6 +1404,9 @@ type DaemonConfig struct {
 	// EnableL7Proxy is the option to enable L7 proxy
 	EnableL7Proxy bool
 
+	// EnableEnvoyADSServer enables the ADS xDS server instead of per-resource-type xDS server
+	EnableEnvoyADSServer bool
+
 	// BootIDFile is the file containing the boot ID of the node
 	BootIDFile string
 
@@ -2462,6 +2469,7 @@ func (c *DaemonConfig) Populate(logger *slog.Logger, vp *viper.Viper) {
 	c.EnableLocalNodeRoute = vp.GetBool(EnableLocalNodeRoute)
 	c.EnablePolicy = strings.ToLower(vp.GetString(EnablePolicy))
 	c.EnableL7Proxy = vp.GetBool(EnableL7Proxy)
+	c.EnableEnvoyADSServer = vp.GetBool(EnableEnvoyADSServer)
 	c.EnableTracing = vp.GetBool(EnableTracing)
 	c.EnableIPIPTermination = vp.GetBool(EnableIPIPTermination)
 	c.UnsafeDaemonConfigOption.EnableIPIPDevices = c.EnableIPIPTermination

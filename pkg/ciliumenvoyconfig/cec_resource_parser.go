@@ -225,7 +225,7 @@ func (r *CECResourceParser) ParseResources(cecNamespace string, cecName string, 
 								rds.RouteConfigName, updated = api.ResourceQualifiedName(cecNamespace, cecName, rds.RouteConfigName, api.ForceNamespace)
 							}
 							if rds.ConfigSource == nil {
-								rds.ConfigSource = envoy.CiliumXDSConfigSource
+								rds.ConfigSource = envoy.GetXDSConfigSource()
 								updated = true
 							}
 						}
@@ -353,7 +353,7 @@ func (r *CECResourceParser) ParseResources(cecNamespace string, cecName string, 
 					cluster.EdsClusterConfig = &envoy_config_cluster.Cluster_EdsClusterConfig{}
 				}
 				if cluster.EdsClusterConfig.EdsConfig == nil {
-					cluster.EdsClusterConfig.EdsConfig = envoy.CiliumXDSConfigSource
+					cluster.EdsClusterConfig.EdsConfig = envoy.GetXDSConfigSource()
 				}
 			}
 
@@ -583,6 +583,11 @@ func (r *CECResourceParser) getBPFMetadataListenerFilter(useOriginalSourceAddr b
 		IsL7Lb:                   l7lb,
 		ProxyId:                  uint32(proxyPort),
 		IpcacheName:              ipcache.Name,
+	}
+
+	if option.Config.EnableEnvoyADSServer {
+		conf.UseNphds = true
+		conf.NpdsConfig = envoy.CiliumXdsWithAdsConfigSource
 	}
 
 	if isHTTPListener && r.httpLingerConfig >= 0 {
@@ -924,7 +929,7 @@ func qualifySdsSecretConfig(sc *envoy_config_tls.SdsSecretConfig, cecNamespace s
 	updated := false
 
 	if sc.SdsConfig == nil {
-		sc.SdsConfig = envoy.CiliumXDSConfigSource
+		sc.SdsConfig = envoy.GetXDSConfigSource()
 		updated = true
 	}
 	var nameUpdated bool
