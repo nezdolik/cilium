@@ -28,6 +28,7 @@ import (
 
 	"github.com/cilium/cilium/pkg/completion"
 	"github.com/cilium/cilium/pkg/crypto/certificatemanager"
+	"github.com/cilium/cilium/pkg/endpointstate"
 	envoypolicy "github.com/cilium/cilium/pkg/envoy/policy"
 	_ "github.com/cilium/cilium/pkg/envoy/resource"
 	util "github.com/cilium/cilium/pkg/envoy/util"
@@ -37,6 +38,7 @@ import (
 	"github.com/cilium/cilium/pkg/logging/logfields"
 	"github.com/cilium/cilium/pkg/option"
 	"github.com/cilium/cilium/pkg/policy"
+	"github.com/cilium/cilium/pkg/promise"
 	"github.com/cilium/cilium/pkg/proxy/endpoint"
 )
 
@@ -105,9 +107,11 @@ type adsServer struct {
 
 	l7RulesTranslator envoypolicy.EnvoyL7RulesTranslator
 	secretManager     certificatemanager.SecretManager
+
+	restorerPromise promise.Promise[endpointstate.Restorer]
 }
 
-func newADSServerWithCache(cache xdsnew.Cache, logger *slog.Logger, ipCache IPCacheEventSource, localEndpointStore *LocalEndpointStore, config xdsServerConfig, secretManager certificatemanager.SecretManager) *adsServer {
+func newADSServerWithCache(cache xdsnew.Cache, logger *slog.Logger, ipCache IPCacheEventSource, localEndpointStore *LocalEndpointStore, config xdsServerConfig, secretManager certificatemanager.SecretManager, restorerPromise promise.Promise[endpointstate.Restorer]) *adsServer {
 	adsServer := &adsServer{
 		logger:             logger,
 		cache:              cache,
@@ -117,14 +121,15 @@ func newADSServerWithCache(cache xdsnew.Cache, logger *slog.Logger, ipCache IPCa
 		secretManager:      secretManager,
 		socketPath:         util.GetXDSSocketPath(config.envoySocketDir),
 		accessLogPath:      util.GetAccessLogSocketPath(config.envoySocketDir),
+		restorerPromise:    restorerPromise,
 		listenerCount:      make(map[string]uint),
 	}
 	return adsServer
 }
 
 // newADSServer creates a new ADS GRPC server.
-func newADSServer(logger *slog.Logger, ipCache IPCacheEventSource, localEndpointStore *LocalEndpointStore, config xdsServerConfig, secretManager certificatemanager.SecretManager) *adsServer {
-	return newADSServerWithCache(xdsnew.NewCache(logger), logger, ipCache, localEndpointStore, config, secretManager)
+func newADSServer(logger *slog.Logger, ipCache IPCacheEventSource, localEndpointStore *LocalEndpointStore, config xdsServerConfig, secretManager certificatemanager.SecretManager, restorerPromise promise.Promise[endpointstate.Restorer]) *adsServer {
+	return newADSServerWithCache(xdsnew.NewCache(logger), logger, ipCache, localEndpointStore, config, secretManager, restorerPromise)
 }
 
 func (s *adsServer) start(ctx context.Context) error {

@@ -42,6 +42,7 @@ type Cache interface {
 	GetAllResources(nodeID string) *xds.Resources
 	AreDifferentSnapshots(left, right cache.ResourceSnapshot) bool
 	GetCompletionCallbacks() *callbacks.CompletionCallbacks
+	GetNPHDSCache() *cache.LinearCache
 }
 
 type CacheImpl struct {
@@ -256,6 +257,10 @@ func (c CacheImpl) GetSnapshot(nodeID string) (cache.ResourceSnapshot, error) {
 
 func (c *CacheImpl) GetCompletionCallbacks() *callbacks.CompletionCallbacks {
 	return &c.completionCbs
+}
+
+func (c *CacheImpl) GetNPHDSCache() *cache.LinearCache {
+	return c.nphdsCache
 }
 
 func (c CacheImpl) SetResources(nodeID string, resources *xds.Resources) {
