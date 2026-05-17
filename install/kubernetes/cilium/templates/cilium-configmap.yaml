@@ -1494,6 +1494,10 @@ data:
 {{- end }}
   envoy-keep-cap-netbindservice: {{ .Values.envoy.securityContext.capabilities.keepCapNetBindService | quote }}
 
+  {{- if .Values.envoy.adsServerEnabled }}
+  enable-envoy-ads-server: "true"
+  {{- end }}
+
 {{- if hasKey .Values.clustermesh "maxConnectedClusters" }}
   max-connected-clusters: {{ .Values.clustermesh.maxConnectedClusters | quote }}
 {{- end }}

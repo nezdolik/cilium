@@ -130,6 +130,12 @@ jobs:
           bpf-lb-acceleration: disabled
           loadbalancer-mode: dedicated
           default-ingress-controller: true
+        - name: With_ADS_Server
+          kube-proxy-replacement: true
+          bpf-lb-acceleration: disabled
+          loadbalancer-mode: dedicated
+          default-ingress-controller: false
+          ads-server: true
 
     steps:
       - name: Set commit status to pending
@@ -170,6 +176,10 @@ jobs:
             --helm-set=ingressController.default=${{ matrix.default-ingress-controller }} \
             --helm-set=extraConfig.bpf-lb-acceleration=${{ matrix.bpf-lb-acceleration }} \
             --helm-set=l2announcements.enabled=true"
+
+          if [ "${{ matrix.ads-server }}" == "true" ]; then
+            CILIUM_INSTALL_DEFAULTS="${CILIUM_INSTALL_DEFAULTS} --helm-set=envoy.adsServerEnabled=true"
+          fi
 
           echo cilium_install_defaults=${CILIUM_INSTALL_DEFAULTS} >> $GITHUB_OUTPUT
 

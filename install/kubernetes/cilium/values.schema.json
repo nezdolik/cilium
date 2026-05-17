@@ -2312,6 +2312,9 @@
     },
     "envoy": {
       "properties": {
+        "adsServerEnabled": {
+          "type": "boolean"
+        },
         "affinity": {
           "properties": {
             "nodeAffinity": {

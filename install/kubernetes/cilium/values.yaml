@@ -2691,6 +2691,9 @@ dashboards:
   annotations: {}
 # Configure Cilium Envoy options.
 envoy:
+  # -- Enable the ADS (Aggregated Discovery Service) xDS server for Envoy proxy
+  # configuration instead of the default per-resource-type xDS server.
+  adsServerEnabled: false
   # @schema
   # type: [null, boolean]
   # @schema

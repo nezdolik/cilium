@@ -137,6 +137,7 @@ cilium-agent [flags]
       --enable-endpoint-health-checking                           Enable connectivity health checking between virtual endpoints (default true)
       --enable-endpoint-lockdown-on-policy-overflow               When an endpoint's policy map overflows, shutdown all (ingress and egress) network traffic for that endpoint.
       --enable-endpoint-routes                                    Use per endpoint routes instead of routing via cilium_host
+      --enable-envoy-ads-server                                   Enable the ADS (Aggregated Discovery Service) xDS server for Envoy proxy configuration instead of the default per-resource-type xDS server
       --enable-envoy-config                                       Enable Envoy Config CRDs
       --enable-extended-ip-protocols                              Enable traffic with extended IP protocols in datapath
       --enable-gateway-api                                        Enables Envoy secret sync for Gateway API related TLS secrets
