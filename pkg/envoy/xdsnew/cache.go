@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright Authors of Cilium
+
 package xdsnew
 
 import (
@@ -7,11 +10,6 @@ import (
 	"hash/fnv"
 	"log/slog"
 
-	"github.com/cilium/cilium/pkg/completion"
-	"github.com/cilium/cilium/pkg/envoy/xds"
-	callbacks "github.com/cilium/cilium/pkg/envoy/xdsnew/callbacks"
-	"github.com/cilium/cilium/pkg/lock"
-	"github.com/cilium/cilium/pkg/logging/logfields"
 	cilium "github.com/cilium/proxy/go/cilium/api"
 	"github.com/davecgh/go-spew/spew"
 	envoy_config_cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
@@ -23,6 +21,12 @@ import (
 	cache "github.com/envoyproxy/go-control-plane/pkg/cache/v3"
 	envoy_resource "github.com/envoyproxy/go-control-plane/pkg/resource/v3"
 	"k8s.io/apimachinery/pkg/util/rand"
+
+	"github.com/cilium/cilium/pkg/completion"
+	"github.com/cilium/cilium/pkg/envoy/xds"
+	callbacks "github.com/cilium/cilium/pkg/envoy/xdsnew/callbacks"
+	"github.com/cilium/cilium/pkg/lock"
+	"github.com/cilium/cilium/pkg/logging/logfields"
 )
 
 const (

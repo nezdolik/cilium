@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright Authors of Cilium
+
 package xdsnew
 
 import (
@@ -6,10 +9,12 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/cilium/cilium/pkg/completion"
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	discovery "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
 	sotw "github.com/envoyproxy/go-control-plane/pkg/server/sotw/v3"
+
+	"github.com/cilium/cilium/pkg/completion"
+	"github.com/cilium/cilium/pkg/logging/logfields"
 )
 
 const (
@@ -149,7 +154,10 @@ func (cb CompletionCallbacks) removeFromOrderedCompletions(c *completion.Complet
 func (cb CompletionCallbacks) CancelPendingCompletions(typeURL string) {
 	for c, pc := range cb.pendingCompletions {
 		if pc.typeURL == typeURL {
-			cb.Log.Debug("Cancelling pending completion", "type_url", typeURL, "version", pc.version, "node_id", pc.nodeID)
+			cb.Log.Debug("Cancelling pending completion",
+				logfields.XDSTypeURL, typeURL,
+				logfields.Version, pc.version,
+				logfields.NodeID, pc.nodeID)
 			c.Complete(nil)
 			delete(cb.pendingCompletions, c)
 			cb.removeFromOrderedCompletions(c)
@@ -164,10 +172,16 @@ func (cb CompletionCallbacks) PendingCompletionCount() int {
 
 func (cb CompletionCallbacks) AddTypeVersionCompletion(c *completion.Completion, version string, typeURL string, nodeID string, revertFunc func()) {
 	if _, ok := cb.pendingCompletions[c]; ok {
-		cb.Log.Warn("Reusing existing completion", "type_url", typeURL, "version", version, "node_id", nodeID)
+		cb.Log.Warn("Reusing existing completion",
+			logfields.XDSTypeURL, typeURL,
+			logfields.Version, version,
+			logfields.NodeID, nodeID)
 		return
 	}
-	cb.Log.Debug("Adding pending completion for type URL and version", "type_url", typeURL, "version", version, "node_id", nodeID)
+	cb.Log.Debug("Adding pending completion for type URL and version",
+		logfields.XDSTypeURL, typeURL,
+		logfields.Version, version,
+		logfields.NodeID, nodeID)
 	cb.pendingCompletions[c] = &pendingCompletion{
 		nodeID:     nodeID,
 		version:    version,
@@ -206,7 +220,7 @@ func (cb CompletionCallbacks) OnStreamOpen(ctx context.Context, streamID int64, 
 
 // OnStreamClosed is called immediately prior to closing an xDS stream with a stream ID.
 func (cb CompletionCallbacks) OnStreamClosed(streamID int64, node *core.Node) {
-	cb.Log.Info("OnStreamClosed", "streamid", streamID)
+	cb.Log.Info("OnStreamClosed", logfields.XDSStreamID, streamID)
 }
 
 // OnStreamRequest is called once a request is received on a stream.
@@ -225,11 +239,12 @@ func (cb CompletionCallbacks) OnStreamRequest(streamID int64, req *discovery.Dis
 			if pc.typeURL != typeURL || pc.nodeID != nodeID {
 				continue
 			}
-			cb.Log.Warn("NACK received, reverting resource change",
-				"type_url", pc.typeURL,
-				"version", pc.version,
-				"node_id", pc.nodeID,
-				"error", req.GetErrorDetail().GetMessage(),
+			cb.Log.Warn(
+				"NACK received, reverting resource change",
+				logfields.XDSTypeURL, pc.typeURL,
+				logfields.Version, pc.version,
+				logfields.NodeID, pc.nodeID,
+				logfields.Error, req.GetErrorDetail().GetMessage(),
 			)
 			if pc.revertFunc != nil {
 				pc.revertFunc()
@@ -265,7 +280,9 @@ func (cb CompletionCallbacks) OnStreamRequest(streamID int64, req *discovery.Dis
 		for _, c := range completed {
 			c.Complete(nil)
 			delete(cb.pendingCompletions, c)
-			cb.Log.Debug("Completed completion for type URL and version", "type_url", typeURL, "version", req.GetVersionInfo())
+			cb.Log.Debug("Completed completion for type URL and version",
+				logfields.XDSTypeURL, typeURL,
+				logfields.Version, req.GetVersionInfo())
 		}
 		if vo.list.Len() == 0 {
 			delete(cb.completionsOrders, key)
@@ -284,7 +301,10 @@ func (cb CompletionCallbacks) OnStreamResponse(ctx context.Context, streamID int
 		// Check if any completion has been registered for this type URL and node ID, and if so, update resource version.
 		for _, pc := range cb.pendingCompletions {
 			if pc.typeURL == typeURL && pc.nodeID == nodeID {
-				cb.Log.Debug("Updating version completion for type URL and version", "type_url", pc.typeURL, "version", version)
+				cb.Log.Debug("Updating version completion for type URL and version",
+					logfields.XDSTypeURL, pc.typeURL,
+					logfields.Version, version,
+					logfields.NodeID, nodeID)
 				pc.version = version
 			}
 		}
@@ -305,7 +325,10 @@ func (cb CompletionCallbacks) OnStreamResponse(ctx context.Context, streamID int
 			}
 			vo.add(version, c)
 			pc.inCompletionsOrder = true
-			cb.Log.Debug("Added completion to version order", "type_url", typeURL, "version", version, "node_id", nodeID)
+			cb.Log.Debug("Added completion to version order",
+				logfields.XDSTypeURL, typeURL,
+				logfields.Version, version,
+				logfields.NodeID, nodeID)
 		}
 	}
 }

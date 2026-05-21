@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright Authors of Cilium
+
 package xdsnew
 
 import (
@@ -7,7 +10,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/cilium/cilium/pkg/envoy/xds"
 	cilium "github.com/cilium/proxy/go/cilium/api"
 	cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	endpoint "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
@@ -17,6 +19,8 @@ import (
 	envoy_resource "github.com/envoyproxy/go-control-plane/pkg/resource/v3"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/cilium/cilium/pkg/envoy/xds"
 )
 
 type Resource interface {
@@ -172,7 +176,7 @@ func unmarshal(str string, res Resource) error {
 
 	err := protojson.Unmarshal([]byte(str), res)
 	if err != nil {
-		return fmt.Errorf("error deserializing resource: '%s'", err)
+		return fmt.Errorf("error deserializing resource: '%w'", err)
 	}
 	return nil
 }

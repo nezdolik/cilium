@@ -16,6 +16,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/durationpb"
 
+	cilium "github.com/cilium/proxy/go/cilium/api"
+	envoy_config_cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
+	envoy_config_core_v3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	envoy_config_listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
+	envoy_config_route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	envoy_config_http "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
+	envoy_config_tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+
 	"github.com/cilium/cilium/pkg/completion"
 	util "github.com/cilium/cilium/pkg/envoy/util"
 	"github.com/cilium/cilium/pkg/envoy/xds"
@@ -26,13 +34,6 @@ import (
 	"github.com/cilium/cilium/pkg/proxy/accesslog"
 	testipcache "github.com/cilium/cilium/pkg/testutils/ipcache"
 	"github.com/cilium/cilium/pkg/u8proto"
-	cilium "github.com/cilium/proxy/go/cilium/api"
-	envoy_config_cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
-	envoy_config_core_v3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
-	envoy_config_listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
-	envoy_config_route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
-	envoy_config_http "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
-	envoy_config_tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 )
 
 // This test is not run in CI and is meant to be run locally when iterating on the Envoy (xDS) integration.
@@ -531,7 +532,7 @@ func TestEnvoyAdsNetworkPoliciesHandling(t *testing.T) {
 	t.Log("getting nonexistent network policy")
 	policies, err = xdsServer.GetNetworkPolicies([]string{"nonexistent"})
 	require.NoError(t, err)
-	require.Len(t, policies, 0)
+	require.Empty(t, policies)
 
 	// Step 5: RemoveNetworkPolicy - remove endpoint 40's policy
 	t.Log("removing network policy for endpoint 40")
@@ -556,7 +557,7 @@ func TestEnvoyAdsNetworkPoliciesHandling(t *testing.T) {
 
 	policies, err = xdsServer.GetNetworkPolicies(nil)
 	require.NoError(t, err)
-	require.Len(t, policies, 0)
+	require.Empty(t, policies)
 	t.Log("completed removing all network policies")
 
 	t.Log("stopping Envoy")

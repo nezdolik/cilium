@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright Authors of Cilium
-// TODO(nezdolik) finish move updating of resources structure (syncing with snapshot) into cache itself
+
 package envoy
 
 import (
@@ -149,7 +149,8 @@ func (s *adsServer) newSocketListener() (*net.UnixListener, error) {
 	}
 	// Change the group to ProxyGID allowing access from any process from that group.
 	if err = os.Chown(s.socketPath, -1, s.config.proxyGID); err != nil {
-		s.logger.Warn("Envoy: Failed to change the group of xDS listen socket",
+		s.logger.Warn(
+			"Envoy: Failed to change the group of xDS listen socket",
 			logfields.Path, s.socketPath,
 			logfields.Error, err,
 		)
@@ -170,7 +171,8 @@ func (s *adsServer) AddAdminListener(ctx context.Context, port uint16, wg *compl
 	if port == 0 {
 		return // 0 == disabled
 	}
-	s.logger.Debug("Envoy: AddAdminListener",
+	s.logger.Debug(
+		"Envoy: AddAdminListener",
 		logfields.Port, port,
 	)
 
@@ -178,14 +180,16 @@ func (s *adsServer) AddAdminListener(ctx context.Context, port uint16, wg *compl
 		return s.getAdminListenerConfig(port)
 	}, wg, func(err error) {
 		if err != nil {
-			s.logger.Debug("Envoy: Adding admin listener failed",
+			s.logger.Debug(
+				"Envoy: Adding admin listener failed",
 				logfields.Port, port,
 				logfields.Error, err,
 			)
 			// Remove the added listener in case of a failure
 			s.removeListener(ctx, adminListenerName, nil, false)
 		} else {
-			s.logger.Info("Envoy: Listening for Admin API",
+			s.logger.Info(
+				"Envoy: Listening for Admin API",
 				logfields.Port, port,
 			)
 		}
@@ -196,21 +200,24 @@ func (s *adsServer) AddMetricsListener(ctx context.Context, port uint16, wg *com
 	if port == 0 {
 		return // 0 == disabled
 	}
-	s.logger.Debug("Envoy: AddMetricsListener",
+	s.logger.Debug(
+		"Envoy: AddMetricsListener",
 		logfields.Port, port,
 	)
 	s.addListener(ctx, metricsListenerName, func() *envoy_config_listener.Listener {
 		return s.getMetricsListenerConfig(port)
 	}, wg, func(err error) {
 		if err != nil {
-			s.logger.Debug("Envoy: Adding metrics listener failed",
+			s.logger.Debug(
+				"Envoy: Adding metrics listener failed",
 				logfields.Port, port,
 				logfields.Error, err,
 			)
 			// Remove the added listener in case of a failure
 			s.removeListener(ctx, metricsListenerName, nil, false)
 		} else {
-			s.logger.Info("Envoy: Listening for prometheus metrics",
+			s.logger.Info(
+				"Envoy: Listening for prometheus metrics",
 				logfields.Port, port,
 			)
 		}
@@ -297,7 +304,8 @@ func (s *adsServer) addListener(ctx context.Context, name string, listenerConf f
 		if isProxyListener {
 			s.proxyListeners++
 		}
-		s.logger.Info("Envoy: Upserting new listener",
+		s.logger.Info(
+			"Envoy: Upserting new listener",
 			logfields.Listener, name,
 		)
 	}
@@ -430,7 +438,8 @@ func (s *adsServer) getListenerConf(name string, kind policy.L7ParserType, port 
 }
 
 func (s *adsServer) AddListener(ctx context.Context, name string, kind policy.L7ParserType, port uint16, isIngress bool, mayUseOriginalSourceAddr bool, wg *completion.WaitGroup, cb func(err error)) error {
-	s.logger.Debug("Envoy: AddListener",
+	s.logger.Debug(
+		"Envoy: AddListener",
 		logfields.L7ParserType, kind,
 		logfields.Listener, name,
 		logfields.MayUseOriginalSourceAddr, mayUseOriginalSourceAddr,
@@ -448,7 +457,8 @@ func (s *adsServer) RemoveListener(ctx context.Context, name string, wg *complet
 // removeListener removes an existing Envoy Listener.
 // The listener is only actually deleted when the reference count reaches zero.
 func (s *adsServer) removeListener(ctx context.Context, name string, wg *completion.WaitGroup, isProxyListener bool) xds.AckingResourceMutatorRevertFunc {
-	s.logger.Debug("Envoy: RemoveListener",
+	s.logger.Debug(
+		"Envoy: RemoveListener",
 		logfields.Listener, name,
 	)
 
@@ -458,7 +468,8 @@ func (s *adsServer) removeListener(ctx context.Context, name string, wg *complet
 	count := s.listenerCount[name]
 	if count == 0 {
 		// Bail out if this listener does not exist
-		s.logger.Error("Envoy: Attempt to remove non-existent listener",
+		s.logger.Error(
+			"Envoy: Attempt to remove non-existent listener",
 			logfields.Listener, name,
 		)
 		return func() {}
@@ -487,7 +498,8 @@ func (s *adsServer) removeListener(ctx context.Context, name string, wg *complet
 		s.cache.GetCompletionCallbacks().CancelPendingCompletions(NetworkPolicyTypeURL)
 	}
 
-	s.logger.Info("Envoy: Deleting listener",
+	s.logger.Info(
+		"Envoy: Deleting listener",
 		logfields.Listener, name,
 	)
 
@@ -667,7 +679,8 @@ func (s *adsServer) RemoveNetworkPolicy(ctx context.Context, ep endpoint.Endpoin
 	epID := ep.GetID()
 	resourceName := strconv.FormatUint(epID, 10)
 
-	s.logger.Debug("Envoy: RemoveNetworkPolicy",
+	s.logger.Debug(
+		"Envoy: RemoveNetworkPolicy",
 		logfields.CiliumNetworkPolicyName, resourceName,
 	)
 
@@ -750,7 +763,8 @@ func (s *adsServer) portAllocationCallback(ctx context.Context, callbacks map[st
 		for name, cb := range callbacks {
 			if cb != nil {
 				if callbackErr := cb(ctx); callbackErr != nil {
-					s.logger.Warn("Failure in port allocation callback",
+					s.logger.Warn(
+						"Failure in port allocation callback",
 						logfields.ListenerName, name,
 						logfields.Error, callbackErr,
 					)
@@ -807,10 +821,11 @@ func (s *adsServer) buildRevert(ctx context.Context, nodeID string, newResources
 		currentResources := s.cache.GetAllResources(nodeID)
 		currentVersion := s.cache.GetVersion(currentResources)
 		if currentVersion != pushedVersion {
-			s.logger.Info("Skipping revert, snapshot has been superseded",
+			s.logger.Info(
+				"Skipping revert, snapshot has been superseded",
 				logfields.NodeID, nodeID,
-				"pushed_version", pushedVersion,
-				"current_version", currentVersion,
+				logfields.XDSPushedVersion, pushedVersion,
+				logfields.XDSCurrentVersion, currentVersion,
 			)
 			return
 		}
@@ -906,29 +921,34 @@ func (s *adsServer) updateSnapshot(ctx context.Context, resources *xds.Resources
 			msg += fmt.Sprintf("%s%d network policies", sep, len(resources.NetworkPolicies))
 		}
 
-		s.logger.Debug("updateXdsSnapshot: Updating Envoy resources",
+		s.logger.Debug(
+			"updateXdsSnapshot: Updating Envoy resources",
 			logfields.Resource, msg,
 		)
 	}
 	for _, r := range resources.Secrets {
-		s.logger.Debug("Envoy updateSecret",
+		s.logger.Debug(
+			"Envoy updateSecret",
 			logfields.ResourceName, r.Name,
 		)
 	}
 	for _, r := range resources.Endpoints {
-		s.logger.Debug("Envoy updateEndpoint",
+		s.logger.Debug(
+			"Envoy updateEndpoint",
 			logfields.ResourceName, r.ClusterName,
 			logfields.Resource, r,
 		)
 	}
 	for _, r := range resources.Clusters {
-		s.logger.Debug("Envoy updateCluster",
+		s.logger.Debug(
+			"Envoy updateCluster",
 			logfields.ResourceName, r.Name,
 			logfields.Resource, r,
 		)
 	}
 	for _, r := range resources.Routes {
-		s.logger.Debug("Envoy updateRoute",
+		s.logger.Debug(
+			"Envoy updateRoute",
 			logfields.ResourceName, r.Name,
 			logfields.Resource, r,
 		)
@@ -944,7 +964,7 @@ func (s *adsServer) updateSnapshot(ctx context.Context, resources *xds.Resources
 	if err != nil {
 		return err
 	}
-	oldSnapshot, err := s.cache.GetSnapshot(nodeId)
+	oldSnapshot, _ := s.cache.GetSnapshot(nodeId)
 	if oldSnapshot == nil {
 		// This may be first update for this node, so snapshot may not exist yet.
 		s.logger.Warn("Failed to get snapshot for node, will create new one",
@@ -962,7 +982,9 @@ func (s *adsServer) updateSnapshot(ctx context.Context, resources *xds.Resources
 		}
 		err = s.cache.UpdateSnapshot(ctx, nodeId, *newSnapshot, wg, updatedTypeURLsInSnapshot, revertFunc, cb)
 		if err != nil {
-			s.logger.Error("Error setting snapshot for node %s: %q", nodeId, err)
+			s.logger.Error("Error setting snapshot for node %s: %q",
+				logfields.NodeID, nodeId,
+				logfields.Error, err)
 			return err
 		} else {
 			s.cache.SetResources(nodeId, resources)
@@ -1029,7 +1051,8 @@ func (s *adsServer) UpdateEnvoyResources(ctx context.Context, oldResources, newR
 func (s *adsServer) DeleteEnvoyResources(ctx context.Context, resources xds.Resources, waitGroup *completion.WaitGroup) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	s.logger.Debug("DeleteEnvoyResources: Deleting Envoy resources",
+	s.logger.Debug(
+		"DeleteEnvoyResources: Deleting Envoy resources",
 		logfields.ResourceListeners, len(resources.Listeners),
 		logfields.ResourceRoutes, len(resources.Routes),
 		logfields.ResourceClusters, len(resources.Clusters),
@@ -1059,24 +1082,12 @@ func mergeResources(dst *xds.Resources, src *xds.Resources) {
 	if src == nil {
 		return
 	}
-	for name, v := range src.Listeners {
-		dst.Listeners[name] = v
-	}
-	for name, v := range src.Routes {
-		dst.Routes[name] = v
-	}
-	for name, v := range src.Clusters {
-		dst.Clusters[name] = v
-	}
-	for name, v := range src.Endpoints {
-		dst.Endpoints[name] = v
-	}
-	for name, v := range src.Secrets {
-		dst.Secrets[name] = v
-	}
-	for name, v := range src.NetworkPolicies {
-		dst.NetworkPolicies[name] = v
-	}
+	maps.Copy(dst.Listeners, src.Listeners)
+	maps.Copy(dst.Routes, src.Routes)
+	maps.Copy(dst.Clusters, src.Clusters)
+	maps.Copy(dst.Endpoints, src.Endpoints)
+	maps.Copy(dst.Secrets, src.Secrets)
+	maps.Copy(dst.NetworkPolicies, src.NetworkPolicies)
 }
 
 // Subtracts all resources present in b from a.

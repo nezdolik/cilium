@@ -1,9 +1,11 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright Authors of Cilium
+
 package xdsnew
 
 import (
 	"testing"
 
-	"github.com/cilium/cilium/pkg/envoy/xds"
 	cilium "github.com/cilium/proxy/go/cilium/api"
 	cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	envoy_config_cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
@@ -17,6 +19,8 @@ import (
 	envoy_config_tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	secret "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cilium/cilium/pkg/envoy/xds"
 )
 
 func TestMarshalUnmarshalEmptyResources(t *testing.T) {

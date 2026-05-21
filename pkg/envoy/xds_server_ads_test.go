@@ -13,23 +13,19 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	cilium "github.com/cilium/proxy/go/cilium/api"
+	"google.golang.org/protobuf/proto"
+
 	"github.com/cilium/cilium/pkg/completion"
 	"github.com/cilium/cilium/pkg/crypto/certificatemanager"
 	"github.com/cilium/cilium/pkg/endpointstate"
-	envoypolicy "github.com/cilium/cilium/pkg/envoy/policy"
 	"github.com/cilium/cilium/pkg/envoy/xds"
 	"github.com/cilium/cilium/pkg/envoy/xdsnew"
 	"github.com/cilium/cilium/pkg/identity"
 	"github.com/cilium/cilium/pkg/policy"
 	"github.com/cilium/cilium/pkg/promise"
 	"github.com/cilium/cilium/pkg/time"
-	"github.com/cilium/hive/hivetest"
-	cilium "github.com/cilium/proxy/go/cilium/api"
-	"google.golang.org/protobuf/proto"
 
-	"github.com/cilium/cilium/pkg/policy/types"
-	"github.com/cilium/cilium/pkg/proxy/accesslog"
-	"github.com/cilium/cilium/pkg/u8proto"
 	envoy_config_cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	envoy_config_core_v3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	envoy_config_endpoint "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
@@ -37,6 +33,10 @@ import (
 	envoy_config_route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	envoy_config_http "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	envoy_config_tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+
+	"github.com/cilium/cilium/pkg/policy/types"
+	"github.com/cilium/cilium/pkg/proxy/accesslog"
+	"github.com/cilium/cilium/pkg/u8proto"
 )
 
 var (
@@ -273,7 +273,7 @@ func TestRemoveListener(t *testing.T) {
 	assert.NotNil(t, revertFunc)
 
 	resources = cache.GetAllResources(localNodeID)
-	require.Len(t, resources.Listeners, 0)
+	require.Empty(t, resources.Listeners)
 }
 
 // TestUpsertEnvoyResources verifies that Envoy resources can be upserted
@@ -403,7 +403,7 @@ func TestUpdateEnvoyResources(t *testing.T) {
 	require.NotNil(t, resources.Listeners["listener1"])
 	require.Len(t, resources.Clusters, 1)
 	require.NotNil(t, resources.Clusters["cluster1"])
-	require.Len(t, resources.Secrets, 0)
+	require.Empty(t, resources.Secrets)
 	require.Len(t, resources.Routes, 2)
 	require.NotNil(t, resources.Routes["routeConfig1"])
 	require.NotNil(t, resources.Routes["routeConfig2"])
@@ -436,12 +436,12 @@ func TestDeleteEnvoyResources(t *testing.T) {
 	err := server.DeleteEnvoyResources(ctx, xdsResources, nil)
 	assert.NoError(t, err)
 	resources := cache.GetAllResources(localNodeID)
-	require.Len(t, resources.Listeners, 0)
-	require.Len(t, resources.Clusters, 0)
-	require.Len(t, resources.Routes, 0)
-	require.Len(t, resources.Endpoints, 0)
-	require.Len(t, resources.Secrets, 0)
-	require.Len(t, resources.NetworkPolicies, 0)
+	require.Empty(t, resources.Listeners)
+	require.Empty(t, resources.Clusters)
+	require.Empty(t, resources.Routes)
+	require.Empty(t, resources.Endpoints)
+	require.Empty(t, resources.Secrets)
+	require.Empty(t, resources.NetworkPolicies)
 
 	// Add some resources and then delete them.
 	err = server.UpsertEnvoyResources(ctx, DEFAULT_RESOURCES, nil)
@@ -464,12 +464,12 @@ func TestDeleteEnvoyResources(t *testing.T) {
 	err = server.DeleteEnvoyResources(ctx, DEFAULT_RESOURCES, nil)
 	assert.NoError(t, err)
 	resources = cache.GetAllResources(localNodeID)
-	require.Len(t, resources.Listeners, 0)
-	require.Len(t, resources.Clusters, 0)
-	require.Len(t, resources.Routes, 0)
-	require.Len(t, resources.Endpoints, 0)
-	require.Len(t, resources.Secrets, 0)
-	require.Len(t, resources.NetworkPolicies, 0)
+	require.Empty(t, resources.Listeners)
+	require.Empty(t, resources.Clusters)
+	require.Empty(t, resources.Routes)
+	require.Empty(t, resources.Endpoints)
+	require.Empty(t, resources.Secrets)
+	require.Empty(t, resources.NetworkPolicies)
 }
 
 func TestGetNetworkPolicies(t *testing.T) {
@@ -501,7 +501,7 @@ func TestGetNetworkPolicies(t *testing.T) {
 	policies, err = server.GetNetworkPolicies([]string{"nonexistent"})
 	assert.NoError(t, err)
 	assert.NotNil(t, policies)
-	assert.Len(t, policies, 0)
+	assert.Empty(t, policies)
 }
 
 func TestUpdateNetworkPolicy(t *testing.T) {
@@ -563,7 +563,7 @@ func TestRemoveNetworkPolicy(t *testing.T) {
 	server.RemoveNetworkPolicy(ctx, mockEp)
 
 	resources = cache.GetAllResources(localNodeID)
-	require.Len(t, resources.NetworkPolicies, 0)
+	require.Empty(t, resources.NetworkPolicies)
 }
 
 // TestRemoveAllNetworkPolicies verifies that all network policies can be removed
@@ -602,7 +602,7 @@ func TestRemoveAllNetworkPolicies(t *testing.T) {
 
 	server.RemoveAllNetworkPolicies()
 	resources = cache.GetAllResources(localNodeID)
-	require.Len(t, resources.NetworkPolicies, 0)
+	require.Empty(t, resources.NetworkPolicies)
 }
 
 // Mock types for testing
@@ -666,14 +666,6 @@ func (m *mockEndpointInfoSource) GetNamedPort(ingress bool, name string, proto u
 	return 0
 }
 
-func testADSServer(t *testing.T) *adsServer {
-	logger := hivetest.Logger(t)
-	return &adsServer{
-		logger:            logger,
-		l7RulesTranslator: envoypolicy.NewEnvoyL7RulesTranslator(logger, nil),
-	}
-}
-
 // mockRestorer implements endpointstate.Restorer for testing.
 type mockRestorer struct {
 	waitErr error
@@ -701,8 +693,7 @@ func TestStartAdsGRPCServerWithRestorerSuccess(t *testing.T) {
 	resolver, restorerPromise := promise.New[endpointstate.Restorer]()
 	server := newADSServer(logger, nil, nil, config, nil, restorerPromise)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -733,8 +724,7 @@ func TestStartAdsGRPCServerWithRestorerDeadlineExceeded(t *testing.T) {
 	resolver, restorerPromise := promise.New[endpointstate.Restorer]()
 	server := newADSServer(logger, nil, nil, config, nil, restorerPromise)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -764,8 +754,7 @@ func TestStartAdsGRPCServerWithRestorerCanceled(t *testing.T) {
 	resolver, restorerPromise := promise.New[endpointstate.Restorer]()
 	server := newADSServer(logger, nil, nil, config, nil, restorerPromise)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -788,8 +777,7 @@ func TestStartAdsGRPCServerWithNilRestorerPromise(t *testing.T) {
 
 	server := newADSServer(logger, nil, nil, config, nil, nil)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	errCh := make(chan error, 1)
 	go func() {

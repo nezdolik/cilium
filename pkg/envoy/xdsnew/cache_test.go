@@ -159,27 +159,27 @@ func TestGetSnapshot_ExistingNode(t *testing.T) {
 
 	listenersInSnapshot := snap.GetResources(envoy_resource.ListenerType)
 	assert.NotNil(t, listenersInSnapshot)
-	assert.Equal(t, 1, len(listenersInSnapshot))
+	assert.Len(t, listenersInSnapshot, 1)
 
 	endpointsInSnapshot := snap.GetResources(envoy_resource.EndpointType)
 	assert.NotNil(t, endpointsInSnapshot)
-	assert.Equal(t, 0, len(endpointsInSnapshot))
+	assert.Empty(t, endpointsInSnapshot)
 
 	clustersInSnapshot := snap.GetResources(envoy_resource.ClusterType)
 	assert.NotNil(t, clustersInSnapshot)
-	assert.Equal(t, 0, len(clustersInSnapshot))
+	assert.Empty(t, clustersInSnapshot)
 
 	routesInSnapshot := snap.GetResources(envoy_resource.RouteType)
 	assert.NotNil(t, routesInSnapshot)
-	assert.Equal(t, 0, len(routesInSnapshot))
+	assert.Empty(t, routesInSnapshot)
 
 	secretsInSnapshot := snap.GetResources(envoy_resource.SecretType)
 	assert.NotNil(t, secretsInSnapshot)
-	assert.Equal(t, 0, len(secretsInSnapshot))
+	assert.Empty(t, secretsInSnapshot)
 
 	networkPoliciesInSnapshot := snap.GetResources(NetworkPolicyTypeURL)
 	assert.NotNil(t, networkPoliciesInSnapshot)
-	assert.Equal(t, 0, len(networkPoliciesInSnapshot))
+	assert.Empty(t, networkPoliciesInSnapshot)
 
 	err = c.SetSnapshot(context.Background(), "node1", snap)
 	require.NoError(t, err)
@@ -261,7 +261,7 @@ func TestSetResources_OverwriteExisting(t *testing.T) {
 	c.SetResources("node1", res1)
 	storedResources := c.resourcesInSnapshot["node1"]
 	require.NotNil(t, storedResources)
-	assert.Equal(t, 1, len(storedResources.Listeners))
+	assert.Len(t, storedResources.Listeners, 1)
 	assert.Contains(t, storedResources.Listeners, "old-listener")
 
 	res2 := emptyResources()
@@ -270,7 +270,7 @@ func TestSetResources_OverwriteExisting(t *testing.T) {
 
 	storedResources = c.resourcesInSnapshot["node1"]
 	require.NotNil(t, storedResources)
-	assert.Equal(t, 1, len(storedResources.Listeners))
+	assert.Len(t, storedResources.Listeners, 1)
 	assert.Contains(t, storedResources.Listeners, "new-listener")
 }
 
@@ -291,17 +291,17 @@ func TestGetAllResources_ExistingNode(t *testing.T) {
 	result := c.GetAllResources("node1")
 	require.NotNil(t, result)
 	assert.Contains(t, result.Clusters, "cluster1")
-	assert.Equal(t, 1, len(result.Clusters))
+	assert.Len(t, result.Clusters, 1)
 	assert.Contains(t, result.Listeners, "listener1")
 	assert.Contains(t, result.Routes, "route1")
 	assert.Contains(t, result.Routes, "route2")
-	assert.Equal(t, 2, len(result.Routes))
+	assert.Len(t, result.Routes, 2)
 	assert.Contains(t, result.Endpoints, "endpoint1")
-	assert.Equal(t, 1, len(result.Endpoints))
+	assert.Len(t, result.Endpoints, 1)
 	assert.Contains(t, result.Secrets, "secret1")
-	assert.Equal(t, 1, len(result.Secrets))
+	assert.Len(t, result.Secrets, 1)
 	assert.Contains(t, result.NetworkPolicies, "np1")
-	assert.Equal(t, 1, len(result.NetworkPolicies))
+	assert.Len(t, result.NetworkPolicies, 1)
 }
 
 func TestGetAllResources_NonExistingNode(t *testing.T) {
@@ -429,7 +429,7 @@ func TestGenerateSnapshot_WithAllResourceTypes(t *testing.T) {
 
 	assert.Len(t, snap.GetResources(envoy_resource.ListenerType), 1)
 	assert.Len(t, snap.GetResources(envoy_resource.ClusterType), 1)
-	assert.Len(t, snap.GetResources(envoy_resource.RouteType), 0)
+	assert.Empty(t, snap.GetResources(envoy_resource.RouteType))
 	assert.Len(t, snap.GetResources(envoy_resource.EndpointType), 1)
 	assert.Len(t, snap.GetResources(envoy_resource.SecretType), 1)
 }
