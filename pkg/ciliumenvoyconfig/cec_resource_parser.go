@@ -97,7 +97,7 @@ func newCECResourceParser(params parserParams) *CECResourceParser {
 		httpLingerConfig:            params.EnvoyConfig.EnvoyHTTPUpstreamLingerTimeout,
 	}
 	if params.EnvoyConfig.EnvoyAccessLogEnabled {
-		parser.accessLogPath = util.GetAccessLogSocketPath()
+		parser.accessLogPath = util.GetAccessLogSocketPath(util.GetSocketDir(option.Config.RunDir))
 	}
 
 	// Retrieve Ingress IPs from local Node.

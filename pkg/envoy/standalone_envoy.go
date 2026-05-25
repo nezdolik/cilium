@@ -103,6 +103,7 @@ type StandaloneEnvoy struct {
 }
 
 type standaloneEnvoyConfig struct {
+	adsMode                        bool
 	runDir                         string
 	logPath                        string
 	defaultLogLevel                string
@@ -138,6 +139,7 @@ func (o *onDemandXdsStarter) startStandaloneEnvoyInternal(config standaloneEnvoy
 	bootstrapFilePath := filepath.Join(bootstrapDir, "bootstrap.pb")
 
 	err := o.writeBootstrapConfigFile(bootstrapConfig{
+		adsMode:                        config.adsMode,
 		filePath:                       bootstrapFilePath,
 		nodeId:                         "host~127.0.0.1~no-id~localdomain", // node id format inherited from Istio
 		cluster:                        ingressClusterName,
@@ -365,6 +367,7 @@ func (e *StandaloneEnvoy) GetAdminClient() *EnvoyAdminClient {
 }
 
 type bootstrapConfig struct {
+	adsMode                        bool
 	filePath                       string
 	nodeId                         string
 	cluster                        string
@@ -431,6 +434,19 @@ func (o *onDemandXdsStarter) writeBootstrapConfigFile(config bootstrapConfig) er
 			MaxConnections: &wrapperspb.UInt32Value{Value: config.maxConnections},
 			MaxRequests:    &wrapperspb.UInt32Value{Value: config.maxRequests},
 		}},
+	}
+
+	dynamicResources := &envoy_config_bootstrap.Bootstrap_DynamicResources{
+		LdsConfig: CiliumXDSConfigSource,
+		CdsConfig: CiliumXDSConfigSource,
+	}
+
+	if config.adsMode {
+		dynamicResources = &envoy_config_bootstrap.Bootstrap_DynamicResources{
+			AdsConfig: CiliumAdsConfigSource,
+			LdsConfig: CiliumXdsWithAdsConfigSource,
+			CdsConfig: CiliumXdsWithAdsConfigSource,
+		}
 	}
 
 	bs := &envoy_config_bootstrap.Bootstrap{
@@ -533,10 +549,7 @@ func (o *onDemandXdsStarter) writeBootstrapConfigFile(config bootstrapConfig) er
 				},
 			},
 		},
-		DynamicResources: &envoy_config_bootstrap.Bootstrap_DynamicResources{
-			LdsConfig: CiliumXDSConfigSource,
-			CdsConfig: CiliumXDSConfigSource,
-		},
+		DynamicResources: dynamicResources,
 		Admin: &envoy_config_bootstrap.Admin{
 			Address: &envoy_config_core.Address{
 				Address: &envoy_config_core.Address_Pipe{

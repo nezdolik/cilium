@@ -36,6 +36,7 @@ import (
 
 	daemonk8s "github.com/cilium/cilium/daemon/k8s"
 	cmtypes "github.com/cilium/cilium/pkg/clustermesh/types"
+	"github.com/cilium/cilium/pkg/completion"
 	"github.com/cilium/cilium/pkg/datapath/tables"
 	"github.com/cilium/cilium/pkg/endpoint/regeneration"
 	envoyCfg "github.com/cilium/cilium/pkg/envoy/config"
@@ -264,7 +265,6 @@ func TestScript(t *testing.T) {
 		setup,
 		[]string{},
 		"testdata/*.txtar")
-
 }
 
 type resourceKey struct {
@@ -455,7 +455,7 @@ func indentLines(s string) string {
 }
 
 // DeleteResources implements envoySyncer.
-func (f *fakeEnvoySyncerAndPolicyTrigger) DeleteEnvoyResources(ctx context.Context, res xds.Resources) error {
+func (f *fakeEnvoySyncerAndPolicyTrigger) DeleteEnvoyResources(ctx context.Context, res xds.Resources, waitGroup *completion.WaitGroup) error {
 	f.Lock()
 	defer f.Unlock()
 	f.store.delete(&res)
@@ -469,7 +469,7 @@ func (f *fakeEnvoySyncerAndPolicyTrigger) DeleteEnvoyResources(ctx context.Conte
 }
 
 // UpdateResources implements envoySyncer.
-func (f *fakeEnvoySyncerAndPolicyTrigger) UpdateEnvoyResources(ctx context.Context, old xds.Resources, new xds.Resources) error {
+func (f *fakeEnvoySyncerAndPolicyTrigger) UpdateEnvoyResources(ctx context.Context, old xds.Resources, new xds.Resources, waitGroup *completion.WaitGroup) error {
 	f.Lock()
 	defer f.Unlock()
 	f.store.delete(&old)
@@ -531,8 +531,7 @@ func (s staticPortAllocator) ReleaseProxyPort(name string) error {
 
 var _ PortAllocator = staticPortAllocator{}
 
-type mockFeatureMetrics struct {
-}
+type mockFeatureMetrics struct{}
 
 // AddCCEC implements CECMetrics.
 func (m mockFeatureMetrics) AddCCEC() {

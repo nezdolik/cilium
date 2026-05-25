@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/cilium/cilium/pkg/envoy/xds"
 	cilium "github.com/cilium/proxy/go/cilium/api"
 	envoy_config_cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	envoy_config_endpoint "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
@@ -23,6 +22,9 @@ import (
 	cache_types "github.com/envoyproxy/go-control-plane/pkg/cache/types"
 	cache "github.com/envoyproxy/go-control-plane/pkg/cache/v3"
 	envoy_resource "github.com/envoyproxy/go-control-plane/pkg/resource/v3"
+
+	"github.com/cilium/cilium/pkg/completion"
+	"github.com/cilium/cilium/pkg/envoy/xds"
 )
 
 type mockSnapshotCache struct {
@@ -391,6 +393,22 @@ func TestClearSnapshotForType_SetSnapshotError(t *testing.T) {
 	require.NotEmpty(t, mock.setSnapshotCalls)
 }
 
+func TestClearSnapshotForType_ClearsNetworkPolicyCache(t *testing.T) {
+	mock := newMockSnapshotCache()
+	c := newTestCacheWithHasher(mock)
+
+	resources := emptyResources()
+	resources.NetworkPolicies["np1"] = &cilium.NetworkPolicy{EndpointId: 1}
+	c.resourcesInSnapshot["node1"] = resources
+	c.npdsCache.SetResources(map[string]cache_types.Resource{
+		"np1": resources.NetworkPolicies["np1"],
+	})
+
+	c.ClearSnapshotForType("node1", NetworkPolicyTypeURL)
+
+	assert.Empty(t, c.npdsCache.GetResources())
+}
+
 func TestGenerateSnapshot_WithAllResourceTypes(t *testing.T) {
 	mock := newMockSnapshotCache()
 	c := newTestCacheWithHasher(mock)
@@ -414,6 +432,80 @@ func TestGenerateSnapshot_WithAllResourceTypes(t *testing.T) {
 	assert.Len(t, snap.GetResources(envoy_resource.RouteType), 0)
 	assert.Len(t, snap.GetResources(envoy_resource.EndpointType), 1)
 	assert.Len(t, snap.GetResources(envoy_resource.SecretType), 1)
+}
+
+func TestUpdateSnapshot_UpdatesNetworkPolicyCacheWhenTypeChanged(t *testing.T) {
+	mock := newMockSnapshotCache()
+	c := newTestCacheWithHasher(mock)
+
+	resources := emptyResources()
+	resources.NetworkPolicies["np1"] = &cilium.NetworkPolicy{EndpointId: 1}
+	snap, err := c.GenerateSnapshot(resources, c.logger)
+	require.NoError(t, err)
+
+	err = c.UpdateSnapshot(context.Background(), "node1", *snap, nil,
+		map[string]struct{}{NetworkPolicyTypeURL: {}}, nil, nil)
+	require.NoError(t, err)
+
+	policies := c.npdsCache.GetResources()
+	require.Contains(t, policies, "np1")
+	assert.Equal(t, resources.NetworkPolicies["np1"], policies["np1"])
+}
+
+func TestUpdateSnapshot_ClearsNetworkPolicyCacheWhenTypeChangedToEmpty(t *testing.T) {
+	mock := newMockSnapshotCache()
+	c := newTestCacheWithHasher(mock)
+	c.npdsCache.SetResources(map[string]cache_types.Resource{
+		"np1": &cilium.NetworkPolicy{EndpointId: 1},
+	})
+
+	resources := emptyResources()
+	snap, err := c.GenerateSnapshot(resources, c.logger)
+	require.NoError(t, err)
+
+	err = c.UpdateSnapshot(context.Background(), "node1", *snap, nil,
+		map[string]struct{}{NetworkPolicyTypeURL: {}}, nil, nil)
+	require.NoError(t, err)
+
+	assert.Empty(t, c.npdsCache.GetResources())
+}
+
+func TestUpdateSnapshot_DoesNotTouchNetworkPolicyCacheWithoutTypeChange(t *testing.T) {
+	mock := newMockSnapshotCache()
+	c := newTestCacheWithHasher(mock)
+	policy := &cilium.NetworkPolicy{EndpointId: 1}
+	c.npdsCache.SetResources(map[string]cache_types.Resource{"np1": policy})
+
+	resources := emptyResources()
+	snap, err := c.GenerateSnapshot(resources, c.logger)
+	require.NoError(t, err)
+
+	err = c.UpdateSnapshot(context.Background(), "node1", *snap, nil, nil, nil, nil)
+	require.NoError(t, err)
+
+	policies := c.npdsCache.GetResources()
+	require.Contains(t, policies, "np1")
+	assert.Equal(t, policy, policies["np1"])
+}
+
+func TestUpdateSnapshot_RegistersNetworkPolicyCompletionForPolicyChange(t *testing.T) {
+	mock := newMockSnapshotCache()
+	c := newTestCacheWithHasher(mock)
+
+	resources := emptyResources()
+	resources.NetworkPolicies["np1"] = &cilium.NetworkPolicy{EndpointId: 1}
+	snap, err := c.GenerateSnapshot(resources, c.logger)
+	require.NoError(t, err)
+
+	wg := completion.NewWaitGroup(context.Background())
+	defer wg.Cancel()
+
+	err = c.UpdateSnapshot(context.Background(), "node1", *snap, wg,
+		map[string]struct{}{NetworkPolicyTypeURL: {}}, nil, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, c.completionCbs.PendingCompletionCount())
+	c.completionCbs.CancelPendingCompletions(NetworkPolicyTypeURL)
 }
 
 // --- GetVersion ---

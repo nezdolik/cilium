@@ -157,15 +157,15 @@ type fakeXdsServer struct {
 	ObservedMayUseOriginalSourceAddr bool
 }
 
-func (r *fakeXdsServer) UpdateEnvoyResources(ctx context.Context, old xds.Resources, new xds.Resources) error {
+func (r *fakeXdsServer) UpdateEnvoyResources(ctx context.Context, old xds.Resources, new xds.Resources, waitGroup *completion.WaitGroup) error {
 	panic("unimplemented")
 }
 
-func (r *fakeXdsServer) DeleteEnvoyResources(ctx context.Context, resources xds.Resources) error {
+func (r *fakeXdsServer) DeleteEnvoyResources(ctx context.Context, resources xds.Resources, waitGroup *completion.WaitGroup) error {
 	panic("unimplemented")
 }
 
-func (r *fakeXdsServer) UpsertEnvoyResources(ctx context.Context, resources xds.Resources) error {
+func (r *fakeXdsServer) UpsertEnvoyResources(ctx context.Context, resources xds.Resources, waitGroup *completion.WaitGroup) error {
 	panic("unimplemented")
 }
 
@@ -182,7 +182,7 @@ func (*fakeXdsServer) AddMetricsListener(ctx context.Context, port uint16, wg *c
 	panic("unimplemented")
 }
 
-func (*fakeXdsServer) RemoveAllNetworkPolicies(ctx context.Context) {
+func (*fakeXdsServer) RemoveAllNetworkPolicies() {
 	panic("unimplemented")
 }
 

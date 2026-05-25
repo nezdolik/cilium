@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright Authors of Cilium
-// TODO(nezdolik) start using new Resources interface in xds_server_impl.go
 package envoy
 
 import (
@@ -189,12 +188,12 @@ func newXDSServer(logger *slog.Logger, restorerPromise promise.Promise[endpoints
 		localEndpointStore: localEndpointStore,
 
 		socketPath:    util.GetXDSSocketPath(config.envoySocketDir),
-		accessLogPath: util.GetAccessLogSocketPath(),
+		accessLogPath: util.GetAccessLogSocketPath(config.envoySocketDir),
 		config:        config,
 		secretManager: secretManager,
 	}
 	if config.envoyAccessLogEnabled {
-		xdsServer.accessLogPath = util.GetAccessLogSocketPath()
+		xdsServer.accessLogPath = util.GetAccessLogSocketPath(config.envoySocketDir)
 	}
 
 	xdsServer.initializeXdsConfigs()
@@ -850,11 +849,11 @@ func (s *xdsServer) RemoveNetworkPolicy(ctx context.Context, ep endpoint.Endpoin
 	s.localEndpointStore.removeLocalEndpoint(ep)
 }
 
-func (s *xdsServer) RemoveAllNetworkPolicies(ctx context.Context) {
+func (s *xdsServer) RemoveAllNetworkPolicies() {
 	s.networkPolicyCache.Clear(NetworkPolicyTypeURL)
 }
 
-func (s *xdsServer) UpsertEnvoyResources(ctx context.Context, resources xds.Resources) error {
+func (s *xdsServer) UpsertEnvoyResources(ctx context.Context, resources xds.Resources, waitGroup *completion.WaitGroup) error {
 	if option.Config.Debug {
 		msg := ""
 		sep := ""
@@ -990,7 +989,7 @@ func (s *xdsServer) UpsertEnvoyResources(ctx context.Context, resources xds.Reso
 // needed due to the possible dependency between listeners and listeners and clusters. If resources
 // includes listeners the caller MUST pass a context with a timeout to prevent indefinite blocking
 // in case Envoy never responds.
-func (s *xdsServer) UpdateEnvoyResources(ctx context.Context, old, new xds.Resources) error {
+func (s *xdsServer) UpdateEnvoyResources(ctx context.Context, old, new xds.Resources, waitGroup *completion.WaitGroup) error {
 	waitForDelete := false
 	var wg *completion.WaitGroup
 	var revertFuncs xds.AckingResourceMutatorRevertFuncList
@@ -1224,7 +1223,7 @@ func (s *xdsServer) UpdateEnvoyResources(ctx context.Context, old, new xds.Resou
 // DeleteEnvoyResources uses 'ctx' in Wait for Envoy N/ACK if resources contains listeners. If
 // resources includes listeners the caller MUST pass a context with a timeout to prevent indefinite
 // blocking in case Envoy never responds.
-func (s *xdsServer) DeleteEnvoyResources(ctx context.Context, resources xds.Resources) error {
+func (s *xdsServer) DeleteEnvoyResources(ctx context.Context, resources xds.Resources, waitGroup *completion.WaitGroup) error {
 	s.logger.Debug("DeleteEnvoyResources: Deleting Envoy resources",
 		logfields.ResourceListeners, len(resources.Listeners),
 		logfields.ResourceRoutes, len(resources.Routes),

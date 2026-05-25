@@ -199,7 +199,14 @@ func (c *CacheImpl) GenerateSnapshot(resources *xds.Resources, logger *slog.Logg
 	networkPolicies := make(map[string]cache_types.Resource, len(resources.NetworkPolicies))
 	secrets := make([]cache_types.Resource, 0, len(resources.Secrets))
 
-	for _, r := range resources.Endpoints {
+	for name, r := range resources.Endpoints {
+		// Skip wildcard :* endpoints that have no matching cluster,
+		// as they cause snapshot inconsistency (EDS count > CDS references).
+		// These are generated for backward compatibility with the old per-type
+		// xDS caches but are not needed in the ADS snapshot.
+		if _, hasCluster := resources.Clusters[name]; !hasCluster && len(name) > 2 && name[len(name)-2:] == ":*" {
+			continue
+		}
 		endpoints = append(endpoints, r)
 	}
 	for _, r := range resources.Clusters {
@@ -261,39 +268,42 @@ func (c CacheImpl) SetSnapshot(ctx context.Context, nodeID string, newSnapshot c
 
 func (c CacheImpl) UpdateSnapshot(ctx context.Context, nodeID string, newSnapshot WrappedSnapshot, wg *completion.WaitGroup, updatedTypeURLS map[string]struct{}, revertFunc func(), callback func(err error)) error {
 	addCompletion := func(wg *completion.WaitGroup, cb func(err error)) *completion.Completion {
-		if cb != nil {
-			return wg.AddCompletionWithCallback(nil, cb)
-		}
-		return wg.AddCompletion(nil)
+		return wg.AddCompletionWithCallback(nil, cb)
 	}
 
-	var comp *completion.Completion
+	var completions []*completion.Completion
 	if wg != nil && len(updatedTypeURLS) > 0 {
 		for typeURL := range updatedTypeURLS {
-			// Custom Cilium resource typed will be processed below once resource version has been computed by the linear cache.
+			// Custom Cilium resource types are processed below once resource
+			// versions have been computed by their linear caches.
 			if typeURL != NetworkPolicyTypeURL && typeURL != NetworkPolicyHostsTypeUrl {
-				comp = addCompletion(wg, callback)
+				comp := addCompletion(wg, callback)
+				completions = append(completions, comp)
 				c.completionCbs.AddTypeVersionCompletion(comp, newSnapshot.GetVersion(typeURL), typeURL, nodeID, revertFunc)
 			}
 		}
 	}
 	err := c.snapshotCache.SetSnapshot(ctx, nodeID, newSnapshot.Snapshot)
 
-	if err != nil && comp != nil {
-		c.completionCbs.RemoveTypeVersionCompletion(comp)
+	if err != nil {
+		c.logger.Error("****failed to set snapshot", logfields.Error, err)
+		for _, comp := range completions {
+			c.completionCbs.RemoveTypeVersionCompletion(comp)
+		}
+		return err
 	}
 
-	if len(newSnapshot.NetworkPolicies) > 0 {
-		err = c.npdsCache.UpdateResources(newSnapshot.NetworkPolicies, nil)
+	if _, updated := updatedTypeURLS[NetworkPolicyTypeURL]; updated {
 		if wg != nil {
-			comp = addCompletion(wg, callback)
-			// todo (nezdolik) Currenltly is not possible to get resource version from linear cache, instead version will be updated in OnStreamResponse callback.
+			comp := addCompletion(wg, callback)
+			// todo (nezdolik) Currently is not possible to get resource version from linear cache, instead version will be updated in OnStreamResponse callback.
 			// https://github.com/envoyproxy/go-control-plane/pull/1467
 			c.completionCbs.AddTypeVersionCompletion(comp, "", NetworkPolicyTypeURL, nodeID, revertFunc)
 		}
+		c.npdsCache.SetResources(newSnapshot.NetworkPolicies)
 	}
 
-	return err
+	return nil
 }
 
 func (c CacheImpl) ClearSnapshot(nodeID string) {
@@ -331,6 +341,9 @@ func (c CacheImpl) ClearSnapshotForType(nodeID string, resourceType envoy_resour
 	if err = c.SetSnapshot(context.Background(), nodeID, newSnapshot); err != nil {
 		c.logger.Error(fmt.Sprintf("Failed to set snapshot after clearing resources of type %s for node %s: %v", resourceType, nodeID, err))
 		return
+	}
+	if resourceType == NetworkPolicyTypeURL {
+		c.npdsCache.SetResources(map[string]cache_types.Resource{})
 	}
 }
 
